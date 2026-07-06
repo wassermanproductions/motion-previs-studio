@@ -15,15 +15,15 @@ This repository contains the v3 source code. Local signed app bundles and genera
 
 ### Shot Bible and Production Pack
 
-![Motion Previs Studio v3 shot bible and production pack](docs/screenshots/motion-previs-studio-v3-home.png)
+![Motion Previs Studio shot bible and production pack](docs/screenshots/studio-shot-bible-production-pack.png)
 
 ### Source Analysis Workspace
 
-![Motion Previs Studio v3 source analysis workspace](docs/screenshots/motion-previs-studio-v3-shot-planning.png)
+![Motion Previs Studio source analysis workspace](docs/screenshots/studio-source-analysis-workspace.png)
 
 ### Live Reference Analysis
 
-![Motion Previs Studio v3 production pack export inspector](docs/screenshots/motion-previs-studio-v3-production-pack.png)
+![Motion Previs Studio live YouTube reference analysis](docs/screenshots/studio-live-youtube-analysis.jpg)
 
 ## What It Does
 
