@@ -1538,7 +1538,7 @@ select {
   color: var(--text);
 }
 
-@media (max-width: 1320px) {
+@media (max-width: 1160px) {
   .top-chrome {
     min-width: 0;
     grid-template-columns: minmax(180px, 240px) minmax(360px, 1fr) minmax(240px, auto);
