@@ -55,11 +55,38 @@ export type Landmark = {
   presence?: number;
 };
 
+export type PoseModelKey = 'lite' | 'full' | 'heavy';
+
+export type DepthModelKey = 'proxy' | 'depth-anything';
+
+export type PoseAnalysisSettings = {
+  poseModel: PoseModelKey;
+  depthModel: DepthModelKey;
+  detectionConfidence: number;
+  trackingConfidence: number;
+  smoothing: number;
+  temporalWindow: number;
+  maxPeople: number;
+  fillGaps: boolean;
+  optimizeForExport: boolean;
+};
+
+export type PosePersonFrame = {
+  id: number;
+  landmarks: Landmark[];
+  worldLandmarks: Landmark[];
+  score: number;
+};
+
 export type PoseFrame = {
   time: number;
   landmarks: Landmark[];
   worldLandmarks: Landmark[];
   score: number;
+  poses?: PosePersonFrame[];
+  source?: 'detected' | 'filled' | 'missing';
+  filled?: boolean;
+  smoothed?: boolean;
 };
 
 export type PoseData = {
@@ -69,9 +96,19 @@ export type PoseData = {
   height: number;
   frames: PoseFrame[];
   summary: {
+    totalFrames?: number;
     detectedFrames: number;
+    rawDetectedFrames?: number;
+    filledFrames?: number;
+    missingFrames?: number;
+    lowConfidenceFrames?: number;
+    maxPeopleDetected?: number;
     averageScore: number;
     motionEnergy: number;
+    settings?: PoseAnalysisSettings;
+    runtimeModel?: PoseModelKey;
+    runtimeDelegate?: 'GPU' | 'CPU';
+    diagnostics?: string[];
   };
 };
 
@@ -154,6 +191,7 @@ export type PlanningData = {
   exportPresets: ExportPreset[];
   shotBible: ShotBibleEntry[];
   qualityReport: QualityReport;
+  analysisSettings?: PoseAnalysisSettings;
 };
 
 export type ExportResult = {

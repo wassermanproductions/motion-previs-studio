@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const net = require('node:net');
 const { spawn } = require('node:child_process');
 const { _electron } = require('playwright');
 
@@ -15,6 +16,17 @@ const planningData = {
   subjectMode: 'camera-only',
   selectedLayers: ['depth', 'ai-depth', 'pose', 'camera', 'edges', 'lineart', 'masks', 'normals'],
   exportPresets: ['seedance', 'comfyui', 'blender', 'runway', 'kling'],
+  analysisSettings: {
+    poseModel: 'lite',
+    depthModel: 'proxy',
+    detectionConfidence: 0.3,
+    trackingConfidence: 0.3,
+    smoothing: 0.65,
+    temporalWindow: 5,
+    maxPeople: 1,
+    fillGaps: true,
+    optimizeForExport: true
+  },
   shotBible: [
     {
       id: 'shot-qa-001',
@@ -43,7 +55,9 @@ async function main() {
   }
   fs.mkdirSync(outputDir, { recursive: true });
 
-  const vite = spawn(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['vite', '--host', '127.0.0.1'], {
+  const port = await findOpenPort(Number(process.env.MPS_E2E_PORT || 5173));
+  const rendererUrl = `http://127.0.0.1:${port}`;
+  const vite = spawn(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['vite', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
     cwd: root,
     env: process.env,
     stdio: ['ignore', 'pipe', 'pipe']
@@ -51,67 +65,85 @@ async function main() {
   vite.stdout.on('data', (chunk) => process.stdout.write(`[vite] ${chunk}`));
   vite.stderr.on('data', (chunk) => process.stderr.write(`[vite] ${chunk}`));
 
+  let electronApp;
   try {
-    await waitForUrl('http://127.0.0.1:5173');
-    const electronApp = await _electron.launch({
+    await waitForUrl(rendererUrl);
+    electronApp = await _electron.launch({
       args: ['.'],
       cwd: root,
-      env: { ...process.env, ELECTRON_RENDERER_URL: 'http://127.0.0.1:5173' }
+      env: { ...process.env, ELECTRON_RENDERER_URL: rendererUrl }
     });
-    const page = await electronApp.firstWindow();
-    page.setDefaultTimeout(180000);
-    await page.waitForSelector('text=Motion Previs Studio v3');
-    await page.screenshot({ path: path.join(outputDir, 'electron-idle.png'), fullPage: true });
+    await waitForWindow(electronApp);
+    await waitForRendererText(electronApp, 'Motion Previs Studio v3');
+    await captureMainWindow(electronApp, path.join(outputDir, 'electron-idle.png'));
 
-    const analysis = await page.evaluate(async (videoPath) => {
-      return window.motionPrevis.prepareAnalysis({
-        sourcePath: videoPath,
+    const analysis = await executeInRenderer(
+      electronApp,
+      `window.motionPrevis.prepareAnalysis(${JSON.stringify({
+        sourcePath: samplePath,
         start: 0,
         end: 2.2,
         sampleFps: 6
-      });
-    }, samplePath);
+      })})`
+    );
 
-    const poseData = await page.evaluate(async ({ referenceUrl, fps }) => {
-      const { analyzePoseVideo } = await import('/src/lib/pose.ts');
-      return analyzePoseVideo(referenceUrl, fps);
-    }, { referenceUrl: analysis.referenceUrl, fps: 6 });
+    const poseData = await executeInRenderer(
+      electronApp,
+      `(async () => {
+        const { analyzePoseVideo } = await import('/src/lib/pose.ts');
+        return analyzePoseVideo(${JSON.stringify(analysis.referenceUrl)}, 6, ${JSON.stringify(planningData.analysisSettings)});
+      })()`
+    );
 
     if (!poseData.frames.length) throw new Error('Pose analysis returned no frames.');
+    if (typeof poseData.summary.rawDetectedFrames !== 'number' || !Array.isArray(poseData.summary.diagnostics)) {
+      throw new Error('Pose analysis summary did not include hardened diagnostics.');
+    }
 
-    const cameraMotionData = await page.evaluate(async ({ referenceUrl, fps }) => {
-      const { analyzeCameraMotionVideo } = await import('/src/lib/cameraMotion.ts');
-      return analyzeCameraMotionVideo(referenceUrl, fps);
-    }, { referenceUrl: analysis.referenceUrl, fps: 6 });
+    const cameraMotionData = await executeInRenderer(
+      electronApp,
+      `(async () => {
+        const { analyzeCameraMotionVideo } = await import('/src/lib/cameraMotion.ts');
+        return analyzeCameraMotionVideo(${JSON.stringify(analysis.referenceUrl)}, 6);
+      })()`
+    );
 
     if (!cameraMotionData.frames.length) throw new Error('Camera motion analysis returned no frames.');
 
-    const exportResult = await page.evaluate(async ({ analysis, poseData, cameraMotionData, planningData }) => {
-      const { createPoseVideoBlob } = await import('/src/lib/poseVideo.ts');
-      const blob = await createPoseVideoBlob(poseData, analysis.frameSize.width, analysis.frameSize.height);
-      const poseVideoBuffer = await blob.arrayBuffer();
-      return window.motionPrevis.savePoseArtifacts({
-        outputDir: analysis.outputDir,
-        referencePath: analysis.referencePath,
-        depthPath: analysis.depthPath,
-        edgesPath: analysis.edgesPath,
-        lineartPath: analysis.lineartPath,
-        motionMaskPath: analysis.motionMaskPath,
-        normalsPath: analysis.normalsPath,
-        contactSheetPath: analysis.contactSheetPath,
-        animaticPath: analysis.animaticPath,
-        sourceName: analysis.sourceName,
-        range: analysis.range,
-        sampleFps: analysis.sampleFps,
-        poseData,
-        cameraMotionData,
-        planningData,
-        poseVideoBuffer
-      });
-    }, { analysis, poseData, cameraMotionData, planningData });
+    const exportResult = await executeInRenderer(
+      electronApp,
+      `(async () => {
+        const analysis = ${JSON.stringify(analysis)};
+        const poseData = ${JSON.stringify(poseData)};
+        const cameraMotionData = ${JSON.stringify(cameraMotionData)};
+        const planningData = ${JSON.stringify(planningData)};
+        const { createPoseVideoBlob } = await import('/src/lib/poseVideo.ts');
+        const blob = await createPoseVideoBlob(poseData, analysis.frameSize.width, analysis.frameSize.height);
+        const poseVideoBuffer = await blob.arrayBuffer();
+        return window.motionPrevis.savePoseArtifacts({
+          outputDir: analysis.outputDir,
+          referencePath: analysis.referencePath,
+          depthPath: analysis.depthPath,
+          edgesPath: analysis.edgesPath,
+          lineartPath: analysis.lineartPath,
+          motionMaskPath: analysis.motionMaskPath,
+          normalsPath: analysis.normalsPath,
+          contactSheetPath: analysis.contactSheetPath,
+          animaticPath: analysis.animaticPath,
+          sourceName: analysis.sourceName,
+          range: analysis.range,
+          sampleFps: analysis.sampleFps,
+          poseData,
+          cameraMotionData,
+          planningData,
+          poseVideoBuffer
+        });
+      })()`
+    );
 
-    await page.screenshot({ path: path.join(outputDir, 'electron-after-pipeline.png'), fullPage: true });
+    await captureMainWindow(electronApp, path.join(outputDir, 'electron-after-pipeline.png'));
     await electronApp.close();
+    electronApp = null;
 
     const required = [
       analysis.referencePath,
@@ -187,8 +219,71 @@ async function main() {
       )
     );
   } finally {
+    if (electronApp) {
+      await electronApp.close().catch(() => undefined);
+    }
     vite.kill('SIGTERM');
   }
+}
+
+async function waitForWindow(electronApp) {
+  const deadline = Date.now() + 60000;
+  while (Date.now() < deadline) {
+    const count = await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+    if (count > 0) return;
+    await delay(500);
+  }
+  throw new Error('Timed out waiting for Electron BrowserWindow.');
+}
+
+async function waitForRendererText(electronApp, text) {
+  const deadline = Date.now() + 60000;
+  while (Date.now() < deadline) {
+    const hasText = await executeInRenderer(
+      electronApp,
+      `Boolean(document.body && document.body.innerText && document.body.innerText.includes(${JSON.stringify(text)}))`
+    ).catch(() => false);
+    if (hasText) return;
+    await delay(500);
+  }
+  throw new Error(`Timed out waiting for renderer text: ${text}`);
+}
+
+async function executeInRenderer(electronApp, expression) {
+  return electronApp.evaluate(async ({ BrowserWindow }, code) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (!window) throw new Error('No Electron window is available.');
+    return window.webContents.executeJavaScript(code, true);
+  }, expression);
+}
+
+async function captureMainWindow(electronApp, outputPath) {
+  const bytes = await electronApp.evaluate(async ({ BrowserWindow }) => {
+    const window = BrowserWindow.getAllWindows()[0];
+    if (!window) throw new Error('No Electron window is available for screenshot capture.');
+    const image = await window.capturePage();
+    return Array.from(image.toPNG());
+  });
+  fs.writeFileSync(outputPath, Buffer.from(bytes));
+}
+
+async function findOpenPort(startPort) {
+  for (let port = startPort; port < startPort + 50; port += 1) {
+    const available = await canListen(port);
+    if (available) return port;
+  }
+  throw new Error(`No open localhost port found from ${startPort} to ${startPort + 49}.`);
+}
+
+function canListen(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.once('error', () => resolve(false));
+    server.once('listening', () => {
+      server.close(() => resolve(true));
+    });
+    server.listen(port, '127.0.0.1');
+  });
 }
 
 async function waitForUrl(url) {

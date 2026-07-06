@@ -1,5 +1,5 @@
-import type { PoseData, PoseFrame, ProgressFn } from '../types';
-import { POSE_CONNECTIONS } from './pose';
+import type { Landmark, PoseData, PoseFrame, PosePersonFrame, ProgressFn } from '../types';
+import { POSE_CONNECTIONS, poseConnectionColor } from './pose';
 
 export function drawPoseFrame(ctx: CanvasRenderingContext2D, frame: PoseFrame | undefined, width: number, height: number) {
   ctx.save();
@@ -21,7 +21,9 @@ export function drawPoseFrame(ctx: CanvasRenderingContext2D, frame: PoseFrame | 
     ctx.stroke();
   }
 
-  if (!frame?.landmarks?.length) {
+  const poses = frame?.poses?.length ? frame.poses : frame?.landmarks?.length ? [frameToPerson(frame)] : [];
+
+  if (!poses.length) {
     ctx.fillStyle = '#667176';
     ctx.font = '600 18px Inter, system-ui, sans-serif';
     ctx.textAlign = 'center';
@@ -30,37 +32,59 @@ export function drawPoseFrame(ctx: CanvasRenderingContext2D, frame: PoseFrame | 
     return;
   }
 
-  const points = frame.landmarks;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.72)';
+  ctx.shadowBlur = 8;
 
-  for (const [from, to] of POSE_CONNECTIONS) {
-    const a = points[from];
-    const b = points[to];
-    if (!a || !b) continue;
-    const confidence = Math.min(a.visibility ?? 1, b.visibility ?? 1);
-    ctx.strokeStyle = confidence > 0.5 ? '#f5d76e' : '#5a6048';
-    ctx.lineWidth = confidence > 0.5 ? 5 : 2;
-    ctx.beginPath();
-    ctx.moveTo(a.x * width, a.y * height);
-    ctx.lineTo(b.x * width, b.y * height);
-    ctx.stroke();
-  }
+  poses.forEach((pose, poseIndex) => {
+    const points = pose.landmarks;
+    const poseAlpha = poseIndex === 0 ? 1 : 0.58;
 
-  points.forEach((point, index) => {
-    const confidence = point.visibility ?? 1;
-    const radius = index <= 10 ? 4 : 6;
-    ctx.fillStyle = confidence > 0.5 ? '#8ff5ff' : '#596568';
-    ctx.beginPath();
-    ctx.arc(point.x * width, point.y * height, radius, 0, Math.PI * 2);
-    ctx.fill();
+    for (const [from, to] of POSE_CONNECTIONS) {
+      const a = points[from];
+      const b = points[to];
+      if (!a || !b) continue;
+      const confidence = Math.min(a.visibility ?? 1, b.visibility ?? 1);
+      ctx.globalAlpha = confidence > 0.5 ? poseAlpha : poseAlpha * 0.38;
+      ctx.strokeStyle = poseConnectionColor(from, to);
+      ctx.lineWidth = confidence > 0.5 ? 7 : 3;
+      ctx.beginPath();
+      ctx.moveTo(a.x * width, a.y * height);
+      ctx.lineTo(b.x * width, b.y * height);
+      ctx.stroke();
+    }
+
+    points.forEach((point, index) => {
+      const confidence = point.visibility ?? 1;
+      const radius = index <= 10 ? 4.5 : 6.5;
+      ctx.globalAlpha = confidence > 0.5 ? poseAlpha : poseAlpha * 0.45;
+      ctx.fillStyle = index === 0 ? '#e646d8' : '#8ff5ff';
+      ctx.beginPath();
+      ctx.arc(point.x * width, point.y * height, radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#050708';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    });
   });
 
+  ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0;
   ctx.fillStyle = '#c8d2d2';
   ctx.font = '600 14px Inter, system-ui, sans-serif';
   ctx.textAlign = 'left';
-  ctx.fillText(`${frame.time.toFixed(2)}s`, 18, 28);
+  ctx.fillText(`${(frame?.time || 0).toFixed(2)}s  ${frame?.source === 'filled' ? 'filled gap' : 'tracked'}`, 18, 28);
   ctx.restore();
+}
+
+function frameToPerson(frame: PoseFrame): PosePersonFrame {
+  return {
+    id: 0,
+    landmarks: frame.landmarks as Landmark[],
+    worldLandmarks: frame.worldLandmarks as Landmark[],
+    score: frame.score
+  };
 }
 
 export async function createPoseVideoBlob(

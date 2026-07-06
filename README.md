@@ -32,9 +32,10 @@ This repository contains the v3 source code. Local signed app bundles and genera
 - Lets you select a precise shot range before processing.
 - Uses `ffmpeg` to normalize the selected clip and create fast local control passes.
 - Uses MediaPipe Pose Landmarker locally in the renderer to extract 2D and world-space pose landmarks.
+- Adds adjustable pose settings for model choice, detection confidence, tracking confidence, smoothing, temporal gap filling, sample FPS, and max people.
 - Solves subject-independent camera move keyframes from global frame motion, so you can reuse the camera move without reusing the original actor, car, object, or environment.
 - Adds Shot Plan, Reference Mode, Control Layers, Export Presets, and Quality readiness controls for AI-film preproduction.
-- Shows working previews for reference video, camera path, actor pose, depth, edges, masks, and multi-pose/3D previs.
+- Shows working previews for reference video, camera path, colored 2D skeleton overlays, 3D stick-figure previs, depth, edges, masks, and pose diagnostics.
 - Exports a bundle folder and ZIP designed for downstream AI-video and Blender workflows.
 
 ## Workflow
@@ -48,7 +49,7 @@ This repository contains the v3 source code. Local signed app bundles and genera
    - `Scene`: preserve the full reference shot structure.
 4. Select the control layers you want included.
 5. Run analysis.
-6. Review pose, depth, camera, and quality metrics.
+6. Review pose, depth, camera, diagnostics, and quality metrics.
 7. Export the Production Pack.
 
 ## Exported Production Pack
@@ -68,6 +69,7 @@ Each export can include:
 - `pose_high_contrast.mp4`
 - `combined_reference_depth_pose.mp4`
 - `pose_landmarks.json`
+- pose analysis settings and diagnostics in `pose_landmarks.json`, `model_presets.json`, and `bundle_manifest.json`
 - `camera_motion.json`
 - `blender_import_pose.py`
 - `blender_import_camera.py`
@@ -148,6 +150,7 @@ Standard open-source licenses cannot force every fork to display a prominent in-
 - Add a true shot-board view for multiple clips in one project.
 - Add batch processing for entire reference folders.
 - Add a stronger camera solve with optical flow and feature matching.
+- Add DWPose/OpenPose adapters for AI-video pipelines that prefer those skeleton formats.
 - Add ControlNet preset templates for common ComfyUI graphs.
 - Add a direct Blender export that creates a `.blend` file automatically.
 - Add team/project metadata and production notes per shot.

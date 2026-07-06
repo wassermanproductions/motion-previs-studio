@@ -5,9 +5,23 @@ const https = require('node:https');
 const root = path.resolve(__dirname, '..');
 const wasmSrc = path.join(root, 'node_modules', '@mediapipe', 'tasks-vision', 'wasm');
 const wasmDest = path.join(root, 'public', 'mediapipe', 'wasm');
-const modelDest = path.join(root, 'public', 'models', 'pose_landmarker_lite.task');
-const modelUrl =
-  'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task';
+const modelTargets = [
+  {
+    name: 'pose_landmarker_lite.task',
+    url: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task',
+    required: true
+  },
+  {
+    name: 'pose_landmarker_full.task',
+    url: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/latest/pose_landmarker_full.task',
+    required: false
+  },
+  {
+    name: 'pose_landmarker_heavy.task',
+    url: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task',
+    required: false
+  }
+];
 const binDir = path.join(root, 'public', 'bin');
 
 function copyDir(src, dest) {
@@ -31,7 +45,7 @@ function copyDir(src, dest) {
 function download(url, outPath) {
   return new Promise((resolve, reject) => {
     if (fs.existsSync(outPath) && fs.statSync(outPath).size > 1000000) {
-      console.log(`[assets] pose model already present at ${outPath}`);
+      console.log(`[assets] already present at ${outPath}`);
       resolve();
       return;
     }
@@ -69,11 +83,17 @@ function download(url, outPath) {
 
 async function main() {
   copyDir(wasmSrc, wasmDest);
-  try {
-    await download(modelUrl, modelDest);
-  } catch (error) {
-    console.warn(`[assets] ${error.message}`);
-    console.warn('[assets] Pose detection will prompt for asset repair until the model is downloaded.');
+  for (const target of modelTargets) {
+    try {
+      await download(target.url, path.join(root, 'public', 'models', target.name));
+    } catch (error) {
+      console.warn(`[assets] ${target.name}: ${error.message}`);
+      if (target.required) {
+        console.warn('[assets] Pose detection will prompt for asset repair until the Lite model is downloaded.');
+      } else {
+        console.warn(`[assets] Optional ${target.name} unavailable; the app will fall back to Lite for that model choice.`);
+      }
+    }
   }
   try {
     await prepareYtDlp();
