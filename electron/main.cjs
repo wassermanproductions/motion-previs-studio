@@ -455,8 +455,8 @@ async function savePoseArtifacts(payload) {
   };
 
   const manifest = {
-    app: 'Motion Previs Studio v2',
-    version: '0.2.0',
+    app: 'Motion Previs Studio v3',
+    version: '0.3.0',
     createdAt: new Date().toISOString(),
     sourceName: payload.sourceName,
     range: payload.range,
@@ -497,7 +497,7 @@ function zipDirectory(sourceDir, zipPath) {
 
 function comfyManifest(payload) {
   return {
-    name: 'Motion Previs Studio Control Reference Bundle',
+    name: 'Motion Previs Studio v3 Control Reference Bundle',
     source: payload.sourceName,
     range: payload.range,
     recommendedInputs: [
@@ -566,7 +566,7 @@ function promptPack(payload) {
   const style = planning.visualStyle || 'Professional cinematic AI-film shot with controlled camera blocking and coherent previsualization.';
 
   return [
-    '# Motion Previs Studio Prompt Pack',
+    '# Motion Previs Studio v3 Prompt Pack',
     '',
     `Project: ${planning.projectTitle || 'Motion Previs Project'}`,
     `Scene: ${scene}`,
@@ -758,7 +758,7 @@ def main():
             for keyframe in fcurve.keyframe_points:
                 keyframe.interpolation = "BEZIER"
 
-    print(f"Imported {len(frames)} camera move frames from Motion Previs Studio.")
+    print(f"Imported {len(frames)} camera move frames from Motion Previs Studio v3.")
 
 if __name__ == "__main__":
     main()
@@ -806,7 +806,7 @@ def main():
     make_movie_plane("Depth Plate", "depth.mp4", (-3.5, 2.0, 1.0), (1.25, 1.25, 1.0))
     make_movie_plane("Edges Plate", "edges.mp4", (3.5, 2.0, 1.0), (1.25, 1.25, 1.0))
     bpy.ops.wm.save_as_mainfile(filepath=os.path.join(FOLDER, "motion_previs_scene.blend"))
-    print("Built Motion Previs Studio Blender scene with camera, pose, and reference plates.")
+    print("Built Motion Previs Studio v3 Blender scene with camera, pose, and reference plates.")
 
 if __name__ == "__main__":
     main()
@@ -883,7 +883,7 @@ def main():
                 for keyframe in fcurve.keyframe_points:
                     keyframe.interpolation = "LINEAR"
 
-    print(f"Imported {len(frames)} pose frames from Motion Previs Studio.")
+    print(f"Imported {len(frames)} pose frames from Motion Previs Studio v3.")
 
 if __name__ == "__main__":
     main()
@@ -896,7 +896,7 @@ function createWindow() {
     height: 940,
     minWidth: 1180,
     minHeight: 760,
-    title: 'Motion Previs Studio v2',
+    title: 'Motion Previs Studio v3',
     backgroundColor: '#101214',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -916,7 +916,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   app.setAboutPanelOptions({
-    applicationName: 'Motion Previs Studio v2',
+    applicationName: 'Motion Previs Studio v3',
     applicationVersion: app.getVersion(),
     copyright: 'Developed and created by Sam Wasserman (Wasserman Productions / Wasserman.ai).',
     credits: 'Developed and created by Sam Wasserman. WassermanProductions.com / Wasserman.ai.'

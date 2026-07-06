@@ -1,4 +1,4 @@
-# Motion Previs Studio v2
+# Motion Previs Studio v3
 
 Developed and created by **Sam Wasserman**.
 
@@ -7,23 +7,23 @@ Developed and created by **Sam Wasserman**.
 
 Open-source under the [Apache License 2.0](LICENSE). Please preserve the [NOTICE](NOTICE) file and cite Sam Wasserman when using or building on this work.
 
-Motion Previs Studio is a standalone desktop app for turning source video shots into AI-film previsualization and control-reference bundles. It is built for filmmakers who want more precision before generating AI video: select a reference shot, extract pose, depth, camera movement, and control layers, then export a production pack for Seedance, ComfyUI, Blender, Runway, Kling, and similar workflows.
+Motion Previs Studio v3 is a standalone desktop app for turning source video shots into AI-film previsualization and control-reference bundles. It is built for filmmakers who want more precision before generating AI video: select a reference shot, extract pose, depth, camera movement, masks, edges, and control layers, then export a production pack for Seedance, ComfyUI, Blender, Runway, Kling, and similar workflows.
 
-This repository contains the v2 source code. Local signed app bundles and generated build artifacts are intentionally not committed.
+This repository contains the v3 source code. Local signed app bundles and generated build artifacts are intentionally not committed.
 
 ## Screenshots
 
 ### Shot Bible and Production Pack
 
-![Motion Previs Studio shot bible and production pack](docs/screenshots/studio-shot-bible-production-pack.png)
+![Motion Previs Studio v3 shot bible and production pack](docs/screenshots/motion-previs-studio-v3-home.png)
 
 ### Source Analysis Workspace
 
-![Motion Previs Studio source analysis workspace](docs/screenshots/studio-source-analysis-workspace.png)
+![Motion Previs Studio v3 source analysis workspace](docs/screenshots/motion-previs-studio-v3-shot-planning.png)
 
 ### Live Reference Analysis
 
-![Motion Previs Studio live YouTube reference analysis](docs/screenshots/studio-live-youtube-analysis.jpg)
+![Motion Previs Studio v3 production pack export inspector](docs/screenshots/motion-previs-studio-v3-production-pack.png)
 
 ## What It Does
 
@@ -34,7 +34,7 @@ This repository contains the v2 source code. Local signed app bundles and genera
 - Uses MediaPipe Pose Landmarker locally in the renderer to extract 2D and world-space pose landmarks.
 - Solves subject-independent camera move keyframes from global frame motion, so you can reuse the camera move without reusing the original actor, car, object, or environment.
 - Adds Shot Plan, Reference Mode, Control Layers, Export Presets, and Quality readiness controls for AI-film preproduction.
-- Shows four working previews: original reference, depth pass, high-contrast pose plate, and Three.js 3D stick figure.
+- Shows working previews for reference video, camera path, actor pose, depth, edges, masks, and multi-pose/3D previs.
 - Exports a bundle folder and ZIP designed for downstream AI-video and Blender workflows.
 
 ## Workflow
@@ -116,7 +116,7 @@ npm run build
 npm run dist:dir
 ```
 
-The unpacked v2 desktop app is written to `release/mac-*` on macOS. Use `npm run dist` to create DMG/ZIP installers.
+The unpacked v3 desktop app is written to `release/mac-*` on macOS. Use `npm run dist` to create DMG/ZIP installers.
 
 ## QA
 
@@ -155,7 +155,7 @@ Standard open-source licenses cannot force every fork to display a prominent in-
 
 ## Attribution
 
-Motion Previs Studio v2 was developed and created by **Sam Wasserman** for **Wasserman Productions** and **Wasserman.ai**.
+Motion Previs Studio v3 was developed and created by **Sam Wasserman** for **Wasserman Productions** and **Wasserman.ai**.
 
 - [WassermanProductions.com](https://wassermanproductions.com)
 - [Wasserman.ai](https://wasserman.ai)

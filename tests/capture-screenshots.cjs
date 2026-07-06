@@ -30,24 +30,20 @@ async function main() {
 
     const page = await electronApp.firstWindow();
     page.setDefaultTimeout(30000);
-    await page.waitForSelector('text=Motion Previs Studio v2');
+    await page.waitForSelector('text=Motion Previs Studio v3');
     await page.waitForSelector('text=WassermanProductions.com');
-    await page.addStyleTag({
-      content: 'body { zoom: 0.62; }'
-    });
-
     await page.getByRole('button', { name: 'Import' }).click();
     await page.waitForSelector(`text=${path.basename(samplePath)}`);
     await page.locator('.time-inputs input').nth(1).fill('2.20');
     await setRangeValue(page, 2, 6);
-    await page.getByRole('button', { name: 'Run Analysis' }).click();
+    await page.getByRole('button', { name: 'Run Analysis', exact: true }).click();
     await page.waitForSelector('text=Analysis complete', { timeout: 180000 });
-    await page.waitForSelector('.pose-canvas', { timeout: 30000 });
+    await page.waitForSelector('.pose-overlay-preview svg', { timeout: 30000 });
     await seekPreviewVideos(page, 0.5);
     await resetPanelScroll(page);
 
     await page.screenshot({
-      path: path.join(screenshotDir, 'app-home.png')
+      path: path.join(screenshotDir, 'motion-previs-studio-v3-home.png')
     });
 
     await page.locator('.shot-plan-panel').evaluate((element) => {
@@ -58,8 +54,7 @@ async function main() {
     });
     await page.waitForTimeout(200);
     await page.screenshot({
-      path: path.join(screenshotDir, 'app-shot-planning.png'),
-      clip: { x: 0, y: 0, width: 1240, height: 1050 }
+      path: path.join(screenshotDir, 'motion-previs-studio-v3-shot-planning.png')
     });
 
     await page.locator('.left-sidebar').evaluate((element) => {
@@ -70,16 +65,16 @@ async function main() {
     });
     await page.waitForTimeout(200);
     await page.screenshot({
-      path: path.join(screenshotDir, 'app-production-pack.png')
+      path: path.join(screenshotDir, 'motion-previs-studio-v3-production-pack.png')
     });
 
     console.log(
       JSON.stringify(
         {
           screenshots: [
-            path.join(screenshotDir, 'app-home.png'),
-            path.join(screenshotDir, 'app-shot-planning.png'),
-            path.join(screenshotDir, 'app-production-pack.png')
+            path.join(screenshotDir, 'motion-previs-studio-v3-home.png'),
+            path.join(screenshotDir, 'motion-previs-studio-v3-shot-planning.png'),
+            path.join(screenshotDir, 'motion-previs-studio-v3-production-pack.png')
           ]
         },
         null,

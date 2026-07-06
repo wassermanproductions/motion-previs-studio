@@ -60,7 +60,7 @@ async function main() {
     });
     const page = await electronApp.firstWindow();
     page.setDefaultTimeout(180000);
-    await page.waitForSelector('text=Motion Previs Studio');
+    await page.waitForSelector('text=Motion Previs Studio v3');
     await page.screenshot({ path: path.join(outputDir, 'electron-idle.png'), fullPage: true });
 
     const analysis = await page.evaluate(async (videoPath) => {
@@ -157,7 +157,7 @@ async function main() {
     }
     const controlLayers = JSON.parse(fs.readFileSync(exportResult.files.controlLayersManifest, 'utf8'));
     if (!controlLayers.selectedLayers.includes('camera') || !controlLayers.selectedLayers.includes('lineart')) {
-      throw new Error('Control layer manifest is missing selected v2 layers.');
+      throw new Error('Control layer manifest is missing selected v3 layers.');
     }
     const seedancePrompt = fs.readFileSync(exportResult.files.seedancePrompt, 'utf8');
     if (!seedancePrompt.includes('Subject mode: camera-only') || !seedancePrompt.includes('Preserve only the camera move')) {
