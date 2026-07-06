@@ -1,0 +1,27 @@
+.DS_Store
+
+# Dependencies
+node_modules/
+
+# Build and packaged app output
+dist/
+release/
+*.app/
+*.dmg
+*.zip
+
+# Runtime/test output
+output/
+*.log
+
+# Local environment
+.env
+.env.*
+
+# Generated runtime assets created by scripts/prepare-mediapipe-assets.cjs
+public/bin/
+public/mediapipe/
+public/models/
+
+# Local preserved v1 source snapshot; the public repository is v2 source.
+src/App.v1.tsx

@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use Motion Previs Studio in your work, please cite and credit Sam Wasserman."
+title: "Motion Previs Studio v2"
+authors:
+  - family-names: "Wasserman"
+    given-names: "Sam"
+url: "https://github.com/wassermanproductions/motion-previs-studio"
+license: "Apache-2.0"
+date-released: "2026-07-06"
