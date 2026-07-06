@@ -31,12 +31,24 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+}
+
 body {
   margin: 0;
-  min-width: 1240px;
-  min-height: 760px;
+  min-width: 0;
+  min-height: 0;
   background: var(--bg);
   overflow: hidden;
+}
+
+* {
+  scrollbar-color: #344249 #0b0f11;
+  scrollbar-width: thin;
 }
 
 button,
@@ -52,9 +64,13 @@ button {
 
 .app-shell {
   display: grid;
+  width: 100vw;
   height: 100vh;
-  grid-template-rows: 96px minmax(0, 1fr);
-  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: max-content minmax(0, 1fr);
+  overflow: auto;
+  scrollbar-gutter: stable both-edges;
   background:
     linear-gradient(90deg, rgba(255, 255, 255, 0.025), transparent 18%, transparent 82%, rgba(255, 255, 255, 0.02)),
     #090b0c;
@@ -63,7 +79,8 @@ button {
 .top-chrome {
   position: relative;
   display: grid;
-  grid-template-columns: 260px minmax(560px, 1fr) 280px;
+  min-width: 980px;
+  grid-template-columns: minmax(220px, 280px) minmax(460px, 1fr) minmax(250px, 320px);
   grid-template-rows: 50px 46px;
   align-items: center;
   border-bottom: 1px solid var(--line);
@@ -209,6 +226,7 @@ h1 {
   justify-content: flex-end;
   gap: 8px;
   padding-right: 16px;
+  overflow-x: auto;
 }
 
 .icon-button,
@@ -240,9 +258,12 @@ textarea:disabled {
 
 .studio-shell {
   display: grid;
+  width: 100%;
+  min-width: 980px;
   min-height: 0;
-  grid-template-columns: 292px minmax(710px, 1fr) 328px;
-  overflow: hidden;
+  grid-template-columns: clamp(248px, 19vw, 292px) minmax(620px, 1fr) clamp(286px, 22vw, 328px);
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .sidebar {
@@ -252,7 +273,7 @@ textarea:disabled {
   flex-direction: column;
   gap: 10px;
   padding: 10px;
-  overflow-y: auto;
+  overflow: auto;
   border-color: var(--line);
   background:
     linear-gradient(180deg, rgba(25, 32, 36, 0.9), rgba(11, 14, 15, 0.98)),
@@ -637,13 +658,17 @@ select {
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: 40px minmax(280px, 1fr) 48px 152px 76px;
-  overflow: hidden;
+  max-height: 100%;
+  grid-template-rows: 40px minmax(420px, 1fr) 48px minmax(152px, auto) minmax(76px, auto);
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
   background: #090b0c;
 }
 
 .workspace-toolbar {
   display: grid;
+  min-width: 760px;
   grid-template-columns: minmax(0, 1fr) auto minmax(160px, auto);
   align-items: center;
   gap: 12px;
@@ -696,9 +721,10 @@ select {
 
 .preview-grid {
   display: grid;
-  min-height: 0;
+  min-width: 760px;
+  min-height: 420px;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  grid-template-rows: minmax(145px, 1.08fr) minmax(132px, 0.92fr);
+  grid-template-rows: minmax(190px, 1.08fr) minmax(170px, 0.92fr);
   gap: 4px;
   padding: 8px;
 }
@@ -940,6 +966,8 @@ select {
 
 .transport-bar {
   display: flex;
+  min-width: 760px;
+  min-height: 48px;
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
@@ -978,7 +1006,8 @@ select {
 
 .timeline {
   display: grid;
-  min-height: 0;
+  min-width: 760px;
+  min-height: 152px;
   grid-template-rows: 18px 22px 58px 22px 32px;
   gap: 5px;
   padding: 6px 12px 8px;
@@ -1096,6 +1125,8 @@ select {
 
 .analysis-dock {
   display: grid;
+  min-width: 760px;
+  min-height: 76px;
   grid-template-columns: minmax(130px, 1fr) minmax(160px, 1.1fr) minmax(140px, 1fr) minmax(120px, 1fr) minmax(90px, 0.8fr) 248px minmax(120px, 0.9fr);
   gap: 0;
   align-items: center;
@@ -1508,22 +1539,73 @@ select {
 }
 
 @media (max-width: 1320px) {
-  body {
-    overflow: auto;
-  }
-
-  .app-shell {
-    min-height: 100vh;
+  .top-chrome {
+    min-width: 0;
+    grid-template-columns: minmax(180px, 240px) minmax(360px, 1fr) minmax(240px, auto);
   }
 
   .studio-shell {
-    grid-template-columns: 280px minmax(680px, 1fr);
+    min-width: 0;
+    grid-template-columns: minmax(252px, 286px) minmax(620px, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
   }
 
   .right-sidebar {
     grid-column: 1 / -1;
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
+    max-height: min(42vh, 520px);
+    overflow: auto;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+}
+
+@media (max-width: 1040px) {
+  .top-chrome {
+    min-width: 860px;
+    grid-template-columns: 180px minmax(350px, 1fr) 300px;
+  }
+
+  .studio-shell {
+    min-width: 860px;
+    grid-template-columns: 260px minmax(580px, 1fr);
+  }
+
+  .right-sidebar {
+    grid-template-columns: repeat(2, minmax(260px, 1fr));
+  }
+
+  .analysis-dock {
+    grid-template-columns: repeat(4, minmax(150px, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .top-chrome,
+  .studio-shell {
+    min-width: 860px;
+  }
+
+  .top-chrome {
+    grid-template-columns: 180px minmax(350px, 1fr) 300px;
+  }
+
+  .studio-shell {
+    grid-template-columns: 260px minmax(580px, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+  }
+
+  .workspace {
+    min-height: 0;
+    max-height: 100%;
+  }
+
+  .right-sidebar {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(260px, 1fr));
+    max-height: min(52vh, 640px);
+    overflow: auto;
     border-left: 0;
     border-top: 1px solid var(--line);
   }
