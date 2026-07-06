@@ -13,17 +13,17 @@ This repository contains the v2 source code. Local signed app bundles and genera
 
 ## Screenshots
 
-### Main Studio
+### Shot Bible and Production Pack
 
-![Motion Previs Studio main screen](docs/screenshots/app-home.png)
+![Motion Previs Studio shot bible and production pack](docs/screenshots/studio-shot-bible-production-pack.png)
 
-### Shot Planning
+### Source Analysis Workspace
 
-![Shot planning controls](docs/screenshots/app-shot-planning.png)
+![Motion Previs Studio source analysis workspace](docs/screenshots/studio-source-analysis-workspace.png)
 
-### Production Pack
+### Live Reference Analysis
 
-![Production pack controls](docs/screenshots/app-production-pack.png)
+![Motion Previs Studio live YouTube reference analysis](docs/screenshots/studio-live-youtube-analysis.jpg)
 
 ## What It Does
 
