@@ -463,6 +463,8 @@ async function savePoseArtifacts(payload) {
     sampleFps: payload.poseData?.fps || payload.sampleFps,
     frameCount: payload.poseData?.frames?.length || 0,
     cameraMoveFrames: payload.cameraMotionData?.frames?.length || 0,
+    analysisSettings: payload.poseData?.summary?.settings || payload.planningData?.analysisSettings || null,
+    poseDiagnostics: payload.poseData?.summary?.diagnostics || [],
     planning: payload.planningData || null,
     files
   };
@@ -629,9 +631,10 @@ function defaultShotBible(payload) {
 }
 
 function defaultQualityReport(payload) {
-  const detected = payload.poseData?.summary?.detectedFrames || 0;
+  const rawDetected = payload.poseData?.summary?.rawDetectedFrames ?? payload.poseData?.summary?.detectedFrames ?? 0;
+  const filled = payload.poseData?.summary?.filledFrames || 0;
   const total = payload.poseData?.frames?.length || 0;
-  const poseRatio = total ? detected / total : 0;
+  const poseRatio = total ? clamp(rawDetected / total + Math.min(filled / total, 0.18), 0, 1) : 0;
   const camera = payload.cameraMotionData?.summary?.averageConfidence || 0;
   const score = Math.round((poseRatio * 0.34 + camera * 0.42 + 0.24) * 100);
   return {
@@ -641,7 +644,8 @@ function defaultQualityReport(payload) {
     layers: 'Excellent',
     readiness: score >= 80 ? 'Ready' : score >= 60 ? 'Review' : 'Blocked',
     notes: [
-      `Pose frames detected: ${detected}/${total}`,
+      `Pose frames detected: ${rawDetected}/${total}`,
+      `Filled pose gaps: ${filled}`,
       `Camera confidence: ${Math.round(camera * 100)}%`,
       'Control layers generated: depth, edges, lineart, motion mask, normals proxy, pose, camera.'
     ]
@@ -659,6 +663,8 @@ function modelPresets(payload) {
   const selected = payload.planningData?.exportPresets || ['seedance', 'comfyui', 'blender'];
   return {
     selected,
+    analysisSettings: payload.poseData?.summary?.settings || payload.planningData?.analysisSettings || null,
+    poseDiagnostics: payload.poseData?.summary?.diagnostics || [],
     presets: {
       seedance: {
         primaryInputs: ['reference.mp4', 'ai_depth.mp4', 'depth.mp4', 'pose_high_contrast.mp4', 'camera_motion.json'],

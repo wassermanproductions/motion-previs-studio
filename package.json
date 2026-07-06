@@ -57,6 +57,7 @@
   "build": {
     "appId": "studio.motionprevis.app.v3",
     "productName": "Motion Previs Studio v3",
+    "npmRebuild": false,
     "directories": {
       "output": "release"
     },

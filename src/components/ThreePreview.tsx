@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import type { PoseFrame } from '../types';
-import { POSE_CONNECTIONS } from '../lib/pose';
+import { POSE_CONNECTIONS, poseConnectionColor } from '../lib/pose';
 
 type ThreePreviewProps = {
   frame?: PoseFrame;
@@ -46,10 +46,12 @@ export function ThreePreview({ frame }: ThreePreviewProps) {
 
     const lineGeometry = new THREE.BufferGeometry();
     const linePositions = new Float32Array(POSE_CONNECTIONS.length * 2 * 3);
+    const lineColors = new Float32Array(POSE_CONNECTIONS.length * 2 * 3);
     lineGeometry.setAttribute('position', new THREE.BufferAttribute(linePositions, 3));
+    lineGeometry.setAttribute('color', new THREE.BufferAttribute(lineColors, 3));
     const lines = new THREE.LineSegments(
       lineGeometry,
-      new THREE.LineBasicMaterial({ color: 0xf5d76e, linewidth: 2 })
+      new THREE.LineBasicMaterial({ vertexColors: true, linewidth: 2 })
     );
     scene.add(lines);
 
@@ -111,15 +113,20 @@ function renderFrame(
   });
 
   const positions = lines.geometry.getAttribute('position') as THREE.BufferAttribute;
+  const colors = lines.geometry.getAttribute('color') as THREE.BufferAttribute;
   let cursor = 0;
   for (const [from, to] of POSE_CONNECTIONS) {
     const a = mapped[from] || new THREE.Vector3();
     const b = mapped[to] || new THREE.Vector3();
+    const color = new THREE.Color(poseConnectionColor(from, to));
     positions.setXYZ(cursor, a.x, a.y, a.z);
     positions.setXYZ(cursor + 1, b.x, b.y, b.z);
+    colors.setXYZ(cursor, color.r, color.g, color.b);
+    colors.setXYZ(cursor + 1, color.r, color.g, color.b);
     cursor += 2;
   }
   positions.needsUpdate = true;
+  colors.needsUpdate = true;
   lines.visible = mapped.length > 0;
   renderer.render(scene, camera);
 }

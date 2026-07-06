@@ -49,16 +49,24 @@ import type {
   ExportResult,
   MediaInfo,
   PlanningData,
+  PoseAnalysisSettings,
   PoseData,
   PoseFrame,
+  PoseModelKey,
   QualityReport,
   SubjectMode
 } from './types';
 import { createAiDepthVideoBlob } from './lib/aiDepth';
 import { analyzeCameraMotionVideo } from './lib/cameraMotion';
-import { POSE_CONNECTIONS, analyzePoseVideo } from './lib/pose';
+import {
+  DEFAULT_POSE_SETTINGS,
+  DEPTH_MODEL_OPTIONS,
+  POSE_CONNECTIONS,
+  POSE_MODEL_OPTIONS,
+  analyzePoseVideo,
+  poseConnectionColor
+} from './lib/pose';
 import { createPoseVideoBlob } from './lib/poseVideo';
-import { PoseCanvas } from './components/PoseCanvas';
 import { ThreePreview } from './components/ThreePreview';
 
 type Stage = 'idle' | 'importing' | 'preparing' | 'tracking' | 'ready' | 'exporting' | 'exported' | 'error';
@@ -115,7 +123,7 @@ export function App() {
   const [error, setError] = useState('');
   const [currentTime, setCurrentTime] = useState(0);
   const [versions, setVersions] = useState<Record<string, string>>({});
-  const [useAiDepth, setUseAiDepth] = useState(true);
+  const [poseSettings, setPoseSettings] = useState<PoseAnalysisSettings>(DEFAULT_POSE_SETTINGS);
   const [useCameraMove, setUseCameraMove] = useState(true);
   const [projectTitle, setProjectTitle] = useState('Motion Previs Project');
   const [sceneTitle, setSceneTitle] = useState('Scene 01');
@@ -133,6 +141,7 @@ export function App() {
 
   const duration = source?.duration || 0;
   const selectedDuration = Math.max(0.1, range.end - range.start);
+  const useAiDepth = poseSettings.depthModel === 'depth-anything';
   const currentPoseFrame = useMemo(() => selectPoseFrame(poseData, currentTime), [currentTime, poseData]);
   const qualityReport = useMemo(
     () => createQualityReport(poseData, cameraMotionData, analysis, selectedLayers, useCameraMove),
@@ -162,7 +171,8 @@ export function App() {
           selected: true
         }
       ],
-      qualityReport
+      qualityReport,
+      analysisSettings: poseSettings
     }),
     [
       creativeIntent,
@@ -175,7 +185,8 @@ export function App() {
       shotTitle,
       subjectMode,
       useCameraMove,
-      visualStyle
+      visualStyle,
+      poseSettings
     ]
   );
 
@@ -240,7 +251,7 @@ export function App() {
       });
       setAnalysis(prepared);
       setStage('tracking');
-      const pose = await analyzePoseVideo(prepared.referenceUrl, sampleFps, (nextProgress, nextMessage) => {
+      const pose = await analyzePoseVideo(prepared.referenceUrl, sampleFps, poseSettings, (nextProgress, nextMessage) => {
         setProgress(nextProgress);
         setMessage(nextMessage);
       });
@@ -257,7 +268,9 @@ export function App() {
       setCurrentTime(0);
       setStage('ready');
       setProgress(0.82);
-      setMessage('Analysis complete. Review the previews or export the bundle.');
+      setMessage(
+        `Analysis complete. Pose ${pose.summary.detectedFrames}/${pose.frames.length} frames, ${pose.summary.filledFrames || 0} filled gaps.`
+      );
     } catch (err) {
       fail(err);
     }
@@ -347,6 +360,17 @@ export function App() {
     setRange((current) => ({ ...current, end: next }));
   }
 
+  function updatePoseSetting<K extends keyof PoseAnalysisSettings>(key: K, value: PoseAnalysisSettings[K]) {
+    setPoseSettings((current) => ({ ...current, [key]: value }));
+  }
+
+  function stepPoseSetting(key: 'temporalWindow' | 'maxPeople', delta: number) {
+    setPoseSettings((current) => ({
+      ...current,
+      [key]: key === 'maxPeople' ? clamp(current[key] + delta, 1, 4) : clamp(current[key] + delta, 1, 30)
+    }));
+  }
+
   function toggleLayer(key: ControlLayerKey) {
     setSelectedLayers((current) => {
       if (current.includes(key)) {
@@ -376,6 +400,7 @@ export function App() {
     : `${sampleFps} fps`;
   const resolutionLabel = source ? `${source.width} x ${source.height}` : '--';
   const qualityStatus = stage === 'exported' ? 'Ready to share' : stage === 'ready' ? 'Ready to export' : qualityReport.readiness;
+  const poseModelName = POSE_MODEL_OPTIONS.find((option) => option.key === poseSettings.poseModel)?.label.replace('MediaPipe Pose ', '') || 'Pose';
 
   return (
     <main className="app-shell">
@@ -658,7 +683,7 @@ export function App() {
             <CameraPathPreview videoUrl={previewUrl} poster={previewPoster} cameraMotionData={cameraMotionData} />
           </PreviewPane>
 
-          <PreviewPane title="Pose (Actor)" tone="pose-actor">
+          <PreviewPane title="Pose (2D Skeleton)" tone="pose-actor">
             <PoseOverlayPreview
               frame={currentPoseFrame}
               videoUrl={previewUrl}
@@ -680,8 +705,8 @@ export function App() {
             <LayerVideo url={analysis?.motionMaskUrl} label="Motion mask appears after analysis" />
           </PreviewPane>
 
-          <PreviewPane title="Pose (All)" tone="pose-all">
-            <PoseAllPreview frame={currentPoseFrame} />
+          <PreviewPane title="3D Stick Figure" tone="pose-all">
+            <PoseAllPreview frame={currentPoseFrame} poseData={poseData} />
           </PreviewPane>
         </div>
 
@@ -710,7 +735,7 @@ export function App() {
             {poseData?.frames.map((frame, index) => (
               <span
                 key={`${frame.time}-${index}`}
-                className={frame.landmarks.length ? 'pose-tick detected' : 'pose-tick'}
+                className={frame.filled ? 'pose-tick filled' : frame.landmarks.length ? 'pose-tick detected' : 'pose-tick'}
                 style={{ left: `${(index / Math.max(poseData.frames.length - 1, 1)) * 100}%` }}
               />
             ))}
@@ -742,7 +767,7 @@ export function App() {
 
         <div className="analysis-dock">
           <StatusItem icon={<CheckCircle2 size={18} />} label="Analysis Status" value={stage === 'ready' || stage === 'exported' ? 'Ready' : stage} />
-          <StatusItem icon={<BrainGlyph />} label="Model" value="MediaPipe Pose + Depth" />
+          <StatusItem icon={<BrainGlyph />} label="Model" value={`${poseModelName} + ${useAiDepth ? 'AI Depth' : 'Proxy Depth'}`} />
           <StatusItem icon={<Cpu size={18} />} label="Device" value="CPU Optimized" />
           <StatusItem icon={<Monitor size={18} />} label="Resolution" value={resolutionLabel} />
           <StatusItem icon={<Clapperboard size={18} />} label="FPS" value={frameRateLabel} />
@@ -818,19 +843,12 @@ export function App() {
               rows={2}
             />
           </label>
-          <label className="select-row">
-            <span>Tracking Confidence</span>
-            <select defaultValue="High">
-              <option>High</option>
-              <option>Medium</option>
-              <option>Review</option>
-            </select>
-          </label>
+          <InfoRow label="Tracking Setting" value={poseSettings.trackingConfidence.toFixed(2)} />
           <label className="toggle-row">
             <input type="checkbox" checked readOnly />
             Foot Lock
           </label>
-          <SliderReadout label="Motion Smoothing" value={60} suffix="%" />
+          <SliderReadout label="Motion Smoothing" value={Math.round(poseSettings.smoothing * 100)} suffix="%" />
           <label className="toggle-row">
             <input type="checkbox" checked readOnly />
             Ground Constraint
@@ -840,39 +858,110 @@ export function App() {
         <section className="panel analyze-panel">
           <div className="panel-title">
             <Settings2 size={16} />
-            <span>Analyze</span>
+            <span>Analysis Settings</span>
           </div>
-          <div className="setting-row">
-            <span>Depth pass</span>
-            <strong>{useAiDepth ? 'Depth Anything + proxy' : 'Temporal luma proxy'}</strong>
-          </div>
+          <SettingSelect
+            label="Pose Model"
+            value={poseSettings.poseModel}
+            options={POSE_MODEL_OPTIONS.map((option) => ({
+              value: option.key,
+              label: option.label,
+              title: option.detail
+            }))}
+            onChange={(value) => updatePoseSetting('poseModel', value as PoseModelKey)}
+            disabled={isBusy(stage)}
+          />
+          <SettingSelect
+            label="Depth Model"
+            value={poseSettings.depthModel}
+            options={DEPTH_MODEL_OPTIONS.map((option) => ({
+              value: option.key,
+              label: option.label,
+              title: option.detail
+            }))}
+            onChange={(value) => updatePoseSetting('depthModel', value as PoseAnalysisSettings['depthModel'])}
+            disabled={isBusy(stage)}
+          />
+          <SettingSlider
+            label="Detection Confidence"
+            value={poseSettings.detectionConfidence}
+            min={0.1}
+            max={0.9}
+            step={0.05}
+            onChange={(value) => updatePoseSetting('detectionConfidence', value)}
+            format={(value) => value.toFixed(2)}
+            disabled={isBusy(stage)}
+          />
+          <SettingSlider
+            label="Tracking Confidence"
+            value={poseSettings.trackingConfidence}
+            min={0.1}
+            max={0.9}
+            step={0.05}
+            onChange={(value) => updatePoseSetting('trackingConfidence', value)}
+            format={(value) => value.toFixed(2)}
+            disabled={isBusy(stage)}
+          />
+          <SettingSlider
+            label="Smoothing"
+            value={poseSettings.smoothing}
+            min={0}
+            max={0.95}
+            step={0.05}
+            onChange={(value) => updatePoseSetting('smoothing', value)}
+            format={(value) => `${Math.round(value * 100)}%`}
+            disabled={isBusy(stage)}
+          />
+          <StepperRow
+            label="Temporal Window"
+            value={poseSettings.temporalWindow}
+            suffix="frames"
+            onMinus={() => stepPoseSetting('temporalWindow', -1)}
+            onPlus={() => stepPoseSetting('temporalWindow', 1)}
+            disabled={isBusy(stage)}
+          />
+          <StepperRow
+            label="Max People"
+            value={poseSettings.maxPeople}
+            onMinus={() => stepPoseSetting('maxPeople', -1)}
+            onPlus={() => stepPoseSetting('maxPeople', 1)}
+            disabled={isBusy(stage)}
+          />
           <label className="toggle-row">
-            <input type="checkbox" checked={useAiDepth} onChange={(event) => setUseAiDepth(event.target.checked)} />
-            AI depth export
+            <input
+              type="checkbox"
+              checked={poseSettings.fillGaps}
+              onChange={(event) => updatePoseSetting('fillGaps', event.target.checked)}
+              disabled={isBusy(stage)}
+            />
+            Fill gaps
           </label>
           <label className="toggle-row">
             <input type="checkbox" checked={useCameraMove} onChange={(event) => setUseCameraMove(event.target.checked)} />
             Camera move solve
           </label>
           <label className="toggle-row">
-            <input type="checkbox" checked readOnly />
-            Optimize for export
-          </label>
-          <label className="control-label">
-            Sample FPS
             <input
-              type="range"
-              min={4}
-              max={24}
-              step={1}
-              value={sampleFps}
-              onChange={(event) => setSampleFps(Number(event.target.value))}
+              type="checkbox"
+              checked={poseSettings.optimizeForExport}
+              onChange={(event) => updatePoseSetting('optimizeForExport', event.target.checked)}
               disabled={isBusy(stage)}
             />
+            Optimize for export
           </label>
+          <SettingSlider
+            label="Sample FPS"
+            value={sampleFps}
+            min={4}
+            max={24}
+            step={1}
+            onChange={setSampleFps}
+            format={(value) => `${value} fps`}
+            disabled={isBusy(stage)}
+          />
           <div className="setting-row">
             <span>Current</span>
-            <strong>{sampleFps} fps</strong>
+            <strong>{useAiDepth ? 'AI depth on' : 'Proxy depth only'}</strong>
           </div>
         </section>
 
@@ -903,13 +992,23 @@ export function App() {
         <section className="panel">
           <div className="panel-title">
             <Box size={16} />
-            <span>Pose</span>
+            <span>Pose Diagnostics</span>
           </div>
           <div className="metric-grid">
-            <Metric label="Frames" value={poseData ? String(poseData.frames.length) : '--'} />
-            <Metric label="Detected" value={poseData ? String(poseData.summary.detectedFrames) : '--'} />
+            <Metric label="Frames" value={poseData ? String(poseData.summary.totalFrames || poseData.frames.length) : '--'} />
+            <Metric
+              label="Tracked"
+              value={poseData ? `${poseData.summary.rawDetectedFrames ?? poseData.summary.detectedFrames}/${poseData.summary.totalFrames || poseData.frames.length}` : '--'}
+            />
             <Metric label="Confidence" value={poseData ? `${Math.round(poseData.summary.averageScore * 100)}%` : '--'} />
+            <Metric label="Filled" value={poseData ? String(poseData.summary.filledFrames || 0) : '--'} />
+            <Metric label="People" value={poseData ? String(poseData.summary.maxPeopleDetected || 0) : '--'} />
             <Metric label="Motion" value={poseData ? poseData.summary.motionEnergy.toFixed(3) : '--'} />
+          </div>
+          <div className="diagnostic-list">
+            {(poseData?.summary.diagnostics || ['Run analysis to see tracking diagnostics.']).slice(0, 3).map((item) => (
+              <span key={item}>{item}</span>
+            ))}
           </div>
         </section>
 
@@ -1180,49 +1279,63 @@ function PoseOverlayPreview({
   width: number;
   height: number;
 }) {
+  const poses =
+    frame?.poses?.length
+      ? frame.poses
+      : frame?.landmarks?.length
+        ? [{ id: 0, landmarks: frame.landmarks, worldLandmarks: frame.worldLandmarks, score: frame.score }]
+        : [];
   if (!videoUrl && !frame) return <EmptyPreview label="Actor pose appears after tracking" />;
   return (
     <div className="pose-overlay-preview">
       {videoUrl ? <video src={videoUrl} poster={poster} muted loop playsInline /> : null}
       <svg viewBox={`0 0 ${width} ${height}`} aria-hidden="true">
-        {frame?.landmarks?.length
-          ? POSE_CONNECTIONS.map(([from, to], index) => {
-              const a = frame.landmarks[from];
-              const b = frame.landmarks[to];
+        {poses.map((pose, poseIndex) => (
+          <g key={pose.id} style={{ opacity: poseIndex === 0 ? 1 : 0.62 }}>
+            {POSE_CONNECTIONS.map(([from, to], index) => {
+              const a = pose.landmarks[from];
+              const b = pose.landmarks[to];
               if (!a || !b) return null;
               const confident = Math.min(a.visibility ?? 1, b.visibility ?? 1) > 0.45;
               return (
                 <line
-                  key={`${from}-${to}-${index}`}
+                  key={`${pose.id}-${from}-${to}-${index}`}
                   x1={a.x * width}
                   y1={a.y * height}
                   x2={b.x * width}
                   y2={b.y * height}
+                  stroke={poseConnectionColor(from, to)}
                   className={confident ? 'confident' : ''}
                 />
               );
-            })
-          : null}
-        {frame?.landmarks?.map((point, index) => (
-          <circle key={index} cx={point.x * width} cy={point.y * height} r={index <= 10 ? 5 : 7} />
+            })}
+            {pose.landmarks.map((point, index) => (
+              <circle
+                key={`${pose.id}-${index}`}
+                cx={point.x * width}
+                cy={point.y * height}
+                r={index <= 10 ? 5 : 7}
+                className={index === 0 ? 'head-joint' : ''}
+              />
+            ))}
+          </g>
         ))}
       </svg>
-      {!frame?.landmarks?.length ? <span className="overlay-note">Waiting for pose track</span> : null}
+      <span className={frame?.source === 'filled' ? 'overlay-note filled' : 'overlay-note'}>
+        {poses.length ? `${poses.length} pose${poses.length === 1 ? '' : 's'} ${frame?.source === 'filled' ? 'filled' : 'tracked'}` : 'Waiting for pose track'}
+      </span>
     </div>
   );
 }
 
-function PoseAllPreview({ frame }: { frame?: PoseFrame }) {
+function PoseAllPreview({ frame, poseData }: { frame?: PoseFrame; poseData: PoseData | null }) {
+  const summary = poseData?.summary;
   return (
     <div className="pose-all-preview">
       <ThreePreview frame={frame} />
-      <div className="mini-actors" aria-hidden="true">
-        {['#39e221', '#ff8a00', '#149dff', '#df3d87'].map((color, index) => (
-          <svg key={color} viewBox="0 0 48 92" style={{ color, transform: `translateX(${index * 5}px)` }}>
-            <circle cx="24" cy="11" r="7" />
-            <path d="M24 19 L24 48 M12 31 L24 25 L36 31 M24 48 L14 78 M24 48 L35 78" />
-          </svg>
-        ))}
+      <div className="stick-figure-hud">
+        <span>{frame?.source === 'filled' ? 'Filled frame' : frame?.landmarks?.length ? 'Tracked frame' : 'No pose'}</span>
+        <strong>{summary ? `${summary.detectedFrames}/${summary.totalFrames || poseData?.frames.length || 0}` : '--'}</strong>
       </div>
     </div>
   );
@@ -1303,6 +1416,103 @@ function ModeSegment({
             {option.label}
           </button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function SettingSelect({
+  label,
+  value,
+  options,
+  onChange,
+  disabled
+}: {
+  label: string;
+  value: string;
+  options: { value: string; label: string; title?: string }[];
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <label className="select-row setting-control">
+      <span>{label}</span>
+      <select value={value} onChange={(event) => onChange(event.target.value)} disabled={disabled}>
+        {options.map((option) => (
+          <option key={option.value} value={option.value} title={option.title}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function SettingSlider({
+  label,
+  value,
+  min,
+  max,
+  step,
+  onChange,
+  format,
+  disabled
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  onChange: (value: number) => void;
+  format: (value: number) => string;
+  disabled?: boolean;
+}) {
+  return (
+    <label className="slider-row setting-control">
+      <span>{label}</span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        disabled={disabled}
+      />
+      <strong>{format(value)}</strong>
+    </label>
+  );
+}
+
+function StepperRow({
+  label,
+  value,
+  suffix,
+  onMinus,
+  onPlus,
+  disabled
+}: {
+  label: string;
+  value: number;
+  suffix?: string;
+  onMinus: () => void;
+  onPlus: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="stepper-row setting-control">
+      <span>{label}</span>
+      <div>
+        <strong>
+          {value}
+          {suffix ? ` ${suffix}` : ''}
+        </strong>
+        <button type="button" onClick={onMinus} disabled={disabled} aria-label={`Decrease ${label}`}>
+          -
+        </button>
+        <button type="button" onClick={onPlus} disabled={disabled} aria-label={`Increase ${label}`}>
+          +
+        </button>
       </div>
     </div>
   );
@@ -1460,8 +1670,9 @@ function createQualityReport(
   useCameraMove: boolean
 ): QualityReport {
   const totalFrames = poseData?.frames.length || 0;
-  const detectedFrames = poseData?.summary.detectedFrames || 0;
-  const trackingScore = totalFrames ? detectedFrames / totalFrames : 0;
+  const rawDetectedFrames = poseData?.summary.rawDetectedFrames ?? poseData?.summary.detectedFrames ?? 0;
+  const filledFrames = poseData?.summary.filledFrames || 0;
+  const trackingScore = totalFrames ? clamp(rawDetectedFrames / totalFrames + Math.min(filledFrames / totalFrames, 0.18), 0, 1) : 0;
   const cameraScore = useCameraMove ? cameraMotionData?.summary.averageConfidence || 0 : 0;
   const layerScore = analysis ? Math.min(1, selectedLayers.length / 6) : 0;
   const score = Math.round(trackingScore * 34 + cameraScore * 42 + layerScore * 24);
@@ -1474,7 +1685,8 @@ function createQualityReport(
     layers: qualityBand(layerScore),
     readiness,
     notes: [
-      `Pose frames detected: ${detectedFrames}/${totalFrames}`,
+      `Pose frames detected: ${rawDetectedFrames}/${totalFrames}`,
+      `Filled pose gaps: ${filledFrames}`,
       `Camera confidence: ${Math.round(cameraScore * 100)}%`,
       `Selected control layers: ${selectedLayers.join(', ')}`
     ]
