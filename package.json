@@ -1,7 +1,7 @@
 {
   "name": "motion-previs-studio",
-  "version": "0.2.0",
-  "description": "Standalone desktop app for video pose/depth previs extraction and AI/Blender export bundles.",
+  "version": "0.3.0",
+  "description": "Motion Previs Studio v3 desktop app for video pose/depth/camera previs extraction and AI/Blender export bundles.",
   "author": "Sam Wasserman (Wasserman Productions / Wasserman.ai)",
   "license": "Apache-2.0",
   "repository": {
@@ -55,8 +55,8 @@
     "wait-on": "^8.0.1"
   },
   "build": {
-    "appId": "studio.motionprevis.app.v2",
-    "productName": "Motion Previs Studio v2",
+    "appId": "studio.motionprevis.app.v3",
+    "productName": "Motion Previs Studio v3",
     "directories": {
       "output": "release"
     },

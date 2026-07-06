@@ -1,4 +1,4 @@
-# Public Runtime Assets
+# Motion Previs Studio v3 Public Runtime Assets
 
 The app uses generated runtime assets under `public/mediapipe`, `public/models`,
 and `public/bin`. They are intentionally not committed to this repository.
