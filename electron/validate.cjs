@@ -77,12 +77,31 @@ function validateSavePosePayload(payload) {
   optionalString(payload.contactSheetPath, 'contactSheetPath');
   optionalString(payload.animaticPath, 'animaticPath');
   if (!isPlainObject(payload.poseData)) fail('poseData must be an object.');
+  // v4 optional extra artifacts: an OpenPose render buffer and its keypoints
+  // JSON. Validate shape only when present so old payloads still pass.
+  if (payload.openPoseVideoBuffer !== undefined && payload.openPoseVideoBuffer !== null) {
+    if (!isBufferLike(payload.openPoseVideoBuffer)) fail('openPoseVideoBuffer must be an ArrayBuffer/typed array.');
+  }
+  if (payload.openPoseKeypoints !== undefined && payload.openPoseKeypoints !== null) {
+    if (!isPlainObject(payload.openPoseKeypoints) && !Array.isArray(payload.openPoseKeypoints)) {
+      fail('openPoseKeypoints must be an object or array.');
+    }
+  }
   payload.resolution = validateResolution(payload.resolution);
   return payload;
 }
 
+/** True for an ArrayBuffer, typed array, or Node Buffer (post-IPC shapes). */
+function isBufferLike(value) {
+  if (value instanceof ArrayBuffer) return true;
+  if (ArrayBuffer.isView(value)) return true;
+  if (value && typeof value === 'object' && value.buffer instanceof ArrayBuffer) return true;
+  return false;
+}
+
 module.exports = {
   isPlainObject,
+  isBufferLike,
   requireString,
   optionalString,
   requireNumber,

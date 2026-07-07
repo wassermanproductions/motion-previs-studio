@@ -145,51 +145,121 @@ export async function analyzePoseVideo(
   video.preload = 'auto';
   video.src = videoUrl;
 
-  await waitForMetadata(video);
-  await seekVideo(video, 0);
+  try {
+    await waitForMetadata(video);
+    await seekVideo(video, 0);
 
-  const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 1;
-  const totalFrames = Math.max(1, Math.ceil(duration * fps));
-  const timestampBaseMs = reserveTimestampBaseMs(duration);
-  const rawFrames: PoseFrame[] = [];
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 1;
+    const totalFrames = Math.max(1, Math.ceil(duration * fps));
+    const timestampBaseMs = reserveTimestampBaseMs(duration);
+    const rawFrames: PoseFrame[] = [];
 
-  for (let index = 0; index < totalFrames; index += 1) {
-    const time = Math.min(index / fps, Math.max(duration - 0.001, 0));
-    await seekVideo(video, time);
-    const timestampMs = timestampBaseMs + Math.round(time * 1000);
-    let result;
-    try {
-      result = runtime.landmarker.detectForVideo(video, timestampMs);
-    } catch (error) {
-      if (!String(error).includes('Packet timestamp mismatch')) throw error;
-      poseLandmarkerPromises.delete(runtimeKey(settings));
-      runtime = await loadPoseLandmarker(settings, progress);
-      result = runtime.landmarker.detectForVideo(video, reserveTimestampBaseMs(duration) + Math.round(time * 1000));
+    for (let index = 0; index < totalFrames; index += 1) {
+      const time = Math.min(index / fps, Math.max(duration - 0.001, 0));
+      await seekVideo(video, time);
+      const timestampMs = timestampBaseMs + Math.round(time * 1000);
+      let result;
+      try {
+        result = runtime.landmarker.detectForVideo(video, timestampMs);
+      } catch (error) {
+        if (!String(error).includes('Packet timestamp mismatch')) throw error;
+        evictRuntime(settings);
+        runtime = await loadPoseLandmarker(settings, progress);
+        result = runtime.landmarker.detectForVideo(video, reserveTimestampBaseMs(duration) + Math.round(time * 1000));
+      }
+      const poses = buildPoses(result.landmarks || [], result.worldLandmarks || [], settings.maxPeople);
+      const primary = poses[0];
+      rawFrames.push({
+        time,
+        landmarks: primary?.landmarks || [],
+        worldLandmarks: primary?.worldLandmarks || [],
+        score: primary?.score || 0,
+        poses,
+        source: primary ? 'detected' : 'missing'
+      });
+      progress?.(0.18 + (index / totalFrames) * 0.62, `Tracking pose ${index + 1}/${totalFrames}`);
     }
-    const poses = buildPoses(result.landmarks || [], result.worldLandmarks || [], settings.maxPeople);
-    const primary = poses[0];
-    rawFrames.push({
-      time,
-      landmarks: primary?.landmarks || [],
-      worldLandmarks: primary?.worldLandmarks || [],
-      score: primary?.score || 0,
-      poses,
-      source: primary ? 'detected' : 'missing'
-    });
-    progress?.(0.18 + (index / totalFrames) * 0.62, `Tracking pose ${index + 1}/${totalFrames}`);
+
+    const frames = postProcessFrames(rawFrames, settings);
+    const summary = summarizeFrames(rawFrames, frames, settings, runtime);
+
+    return {
+      fps,
+      duration,
+      width: video.videoWidth,
+      height: video.videoHeight,
+      frames,
+      summary
+    };
+  } finally {
+    // Release the hidden <video> element so its decoder/network resources are
+    // reclaimed regardless of success or failure.
+    releaseVideoElement(video);
   }
+}
 
-  const frames = postProcessFrames(rawFrames, settings);
-  const summary = summarizeFrames(rawFrames, frames, settings, runtime);
+/** Release a hidden <video> element (used by all analysis paths). */
+function releaseVideoElement(video: HTMLVideoElement) {
+  try {
+    video.pause();
+  } catch {
+    /* ignore */
+  }
+  video.onseeked = null;
+  video.onloadedmetadata = null;
+  video.onerror = null;
+  video.removeAttribute('src');
+  video.src = '';
+  try {
+    video.load();
+  } catch {
+    /* ignore */
+  }
+  video.remove();
+}
 
-  return {
-    fps,
-    duration,
-    width: video.videoWidth,
-    height: video.videoHeight,
-    frames,
-    summary
-  };
+/**
+ * Evict a cached landmarker runtime AND close its native handle so the WASM /
+ * GPU resources are freed (a bare Map.delete would leak them). Safe to call
+ * with an in-flight promise: we close it once it settles.
+ */
+function evictRuntime(settings: PoseAnalysisSettings) {
+  const key = runtimeKey(settings);
+  const pending = poseLandmarkerPromises.get(key);
+  poseLandmarkerPromises.delete(key);
+  if (pending) {
+    pending
+      .then((runtime) => {
+        try {
+          runtime.landmarker.close();
+        } catch {
+          /* already closed */
+        }
+      })
+      .catch(() => undefined);
+  }
+}
+
+/** Close and drop every cached PoseLandmarker. Call between big jobs or on teardown. */
+export function disposeAllLandmarkers(): Promise<void> {
+  const pendings = Array.from(poseLandmarkerPromises.values());
+  poseLandmarkerPromises.clear();
+  // The reserved-timestamp counter is a per-app monotonic guard; reset it so a
+  // fresh batch starts from wall-clock again instead of growing unbounded.
+  reservedTimestampMaxMs = 0;
+  return Promise.all(
+    pendings.map((pending) =>
+      pending
+        .then((runtime) => {
+          try {
+            runtime.landmarker.close();
+          } catch {
+            /* already closed */
+          }
+        })
+        .catch(() => undefined)
+    )
+  ).then(() => undefined);
 }
 
 function buildPoses(
@@ -486,7 +556,16 @@ function runtimeKey(settings: PoseAnalysisSettings) {
 }
 
 function reserveTimestampBaseMs(durationSeconds: number) {
-  const requestedBase = Math.max(Date.now(), reservedTimestampMaxMs + 1000);
+  const now = Date.now();
+  // The MediaPipe VIDEO running mode requires strictly increasing timestamps.
+  // We keep a monotonic reservation cursor, but bound it: if it has drifted far
+  // ahead of wall-clock (e.g. after many analyses), snap it back to `now` so it
+  // can never grow without limit across a long session.
+  const MAX_DRIFT_MS = 60 * 60 * 1000; // 1 hour ceiling over wall-clock
+  if (reservedTimestampMaxMs > now + MAX_DRIFT_MS) {
+    reservedTimestampMaxMs = now;
+  }
+  const requestedBase = Math.max(now, reservedTimestampMaxMs + 1000);
   reservedTimestampMaxMs = requestedBase + Math.ceil(durationSeconds * 1000) + 1000;
   return requestedBase;
 }

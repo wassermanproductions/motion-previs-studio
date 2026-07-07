@@ -30,8 +30,13 @@ declare global {
         planningData?: PlanningData;
         poseVideoBuffer: ArrayBuffer;
         aiDepthVideoBuffer?: ArrayBuffer;
+        openPoseVideoBuffer?: ArrayBuffer;
+        openPoseKeypoints?: unknown;
         resolution?: ExportResolution;
       }) => Promise<ExportResult>;
+      encodeFramesBegin: (payload: { fps: number; width: number; height: number }) => Promise<{ sessionId: string }>;
+      encodeFramesFrame: (payload: { sessionId: string; buffer: ArrayBuffer }) => Promise<{ frames: number }>;
+      encodeFramesEnd: (payload: { sessionId: string }) => Promise<{ buffer: ArrayBuffer; frames: number }>;
       openPath: (targetPath: string) => Promise<string>;
       revealPath: (targetPath: string) => Promise<void>;
       openExternal: (url: string) => Promise<void>;
