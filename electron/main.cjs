@@ -1,12 +1,21 @@
-const { app, BrowserWindow, dialog, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, protocol } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
-const { pathToFileURL } = require('node:url');
 const { spawn } = require('node:child_process');
 const archiver = require('archiver');
+const security = require('./security.cjs');
+const validate = require('./validate.cjs');
+const quality = require('../shared/quality.cjs');
+const pkg = require('../package.json');
+
+const APP_NAME = pkg.productName || 'Motion Previs Studio v4';
+const APP_VERSION = pkg.version;
 
 let mainWindow;
+
+// Register the privileged mps:// scheme before app is ready.
+security.registerPrivilegedScheme(protocol);
 
 function appRoot() {
   return app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '..');
@@ -45,6 +54,8 @@ function ytDlpPath() {
 function workspaceRoot() {
   const dir = path.join(app.getPath('userData'), 'projects');
   fs.mkdirSync(dir, { recursive: true });
+  // The workspace holds all app-generated media/exports; always loadable.
+  security.allowRoot(dir);
   return dir;
 }
 
@@ -57,8 +68,9 @@ function safeName(input) {
     .toLowerCase() || 'clip';
 }
 
+// Build an mps:// URL for an allowlisted file (replaces raw file:// URLs).
 function fileUrl(filePath) {
-  return pathToFileURL(filePath).href;
+  return security.toAppUrl(filePath);
 }
 
 async function openExternalUrl(url) {
@@ -141,6 +153,9 @@ async function openMediaFile() {
     ]
   });
   if (result.canceled || !result.filePaths.length) return null;
+  // User explicitly chose this file: record it so mps:// can serve it and
+  // shell:open/reveal can target it.
+  security.allowImportSource(result.filePaths[0]);
   return probe(result.filePaths[0]);
 }
 
@@ -151,10 +166,10 @@ async function importUrl(url) {
 
   const dir = path.join(workspaceRoot(), 'imports', `${Date.now()}-${safeName(url)}`);
   fs.mkdirSync(dir, { recursive: true });
+  security.allowRoot(dir);
   const outputTemplate = path.join(dir, '%(title).120B-%(id)s.%(ext)s');
 
   await run(ytDlpPath(), [
-    url,
     '--output',
     outputTemplate,
     '--format',
@@ -162,7 +177,10 @@ async function importUrl(url) {
     '--merge-output-format',
     'mp4',
     '--no-playlist',
-    '--restrict-filenames'
+    '--restrict-filenames',
+    // Terminate option parsing so the URL can never be treated as a flag.
+    '--',
+    url
   ]);
 
   const candidates = fs
@@ -213,9 +231,18 @@ async function prepareAnalysis(payload) {
     throw new Error('This source does not contain a video stream. Audio-only files can be attached for sync, but pose/depth analysis needs video.');
   }
 
+  const resolution = validate.validateResolution(payload.resolution);
   const fps = clamp(Number(payload.sampleFps || 12), 4, 30);
-  const start = clamp(Number(payload.start || 0), 0, Math.max(meta.duration - 0.1, 0));
-  const end = clamp(Number(payload.end || Math.min(meta.duration, start + 8)), start + 0.1, meta.duration || start + 60);
+  // A trustworthy duration if ffprobe reported one; otherwise fall back to a
+  // modest window so the end clamp never blows out to a bogus +60s span.
+  const hasDuration = Number.isFinite(meta.duration) && meta.duration > 0;
+  const rawStart = Number(payload.start || 0);
+  const start = clamp(rawStart, 0, hasDuration ? Math.max(meta.duration - 0.1, 0) : Math.max(rawStart, 0));
+  const effectiveDuration = hasDuration ? meta.duration : start + 8;
+  const requestedEnd = Number(
+    payload.end !== undefined && payload.end !== null ? payload.end : Math.min(effectiveDuration, start + 8)
+  );
+  const end = clamp(requestedEnd, start + 0.1, effectiveDuration);
   const duration = end - start;
   const slug = safeName(meta.name);
   const analysisId = `${Date.now()}-${slug}`;
@@ -231,8 +258,15 @@ async function prepareAnalysis(payload) {
   const animaticPath = path.join(outDir, 'animatic.mp4');
   const contactSheetPath = path.join(outDir, 'contact_sheet.jpg');
   const previewPath = path.join(outDir, 'preview.jpg');
-  const referenceScale = meta.width >= meta.height ? 'scale=1280:-2' : 'scale=-2:1280';
-  const depthScale = meta.width >= meta.height ? 'scale=960:-2' : 'scale=-2:960';
+  const landscape = meta.width >= meta.height;
+  // In 720p (Seedance) mode, scale so the SHORT edge is 720 with even dims;
+  // otherwise keep the v3 'auto' long-edge behavior.
+  const referenceScale = resolution === '720p'
+    ? (landscape ? 'scale=-2:720' : 'scale=720:-2')
+    : (landscape ? 'scale=1280:-2' : 'scale=-2:1280');
+  const depthScale = resolution === '720p'
+    ? (landscape ? 'scale=-2:720' : 'scale=720:-2')
+    : (landscape ? 'scale=960:-2' : 'scale=-2:960');
 
   await run(ffmpegPath(), [
     '-y',
@@ -262,10 +296,20 @@ async function prepareAnalysis(payload) {
     referencePath
   ]);
 
-  await createControlVideo(referencePath, depthPath, `fps=${fps},${depthScale},format=gray,eq=contrast=1.45:brightness=0.03,boxblur=2:1`, fps);
-  await createControlVideo(referencePath, edgesPath, `fps=${fps},${depthScale},edgedetect=low=0.08:high=0.28,format=gray,eq=contrast=1.35`, fps);
-  await createControlVideo(referencePath, lineartPath, `fps=${fps},${depthScale},format=gray,sobel,negate,eq=contrast=1.2`, fps);
-  await createControlVideo(referencePath, motionMaskPath, `fps=${fps},${depthScale},tblend=all_mode=difference,format=gray,eq=contrast=3.2:brightness=0.02,boxblur=1:1`, fps);
+  // depth, edges, lineart, motion_mask are independent passes off reference.mp4.
+  // normals depends on depth, so it runs after depth completes. Run the
+  // independent passes through a small concurrency pool (3) to speed prep up
+  // without flooding the CPU or interleaving logs unreadably.
+  await runPool(
+    3,
+    [
+      { label: 'depth', task: () => createControlVideo(referencePath, depthPath, `fps=${fps},${depthScale},format=gray,eq=contrast=1.45:brightness=0.03,boxblur=2:1`, fps) },
+      { label: 'edges', task: () => createControlVideo(referencePath, edgesPath, `fps=${fps},${depthScale},edgedetect=low=0.08:high=0.28,format=gray,eq=contrast=1.35`, fps) },
+      { label: 'lineart', task: () => createControlVideo(referencePath, lineartPath, `fps=${fps},${depthScale},format=gray,sobel,negate,eq=contrast=1.2`, fps) },
+      { label: 'motion_mask', task: () => createControlVideo(referencePath, motionMaskPath, `fps=${fps},${depthScale},tblend=all_mode=difference,format=gray,eq=contrast=3.2:brightness=0.02,boxblur=1:1`, fps) }
+    ]
+  );
+  // Depends on depth.mp4 produced above.
   await createControlVideo(depthPath, normalsPath, `fps=${fps},format=gray,sobel,eq=contrast=1.7`, fps);
 
   await run(ffmpegPath(), [
@@ -338,9 +382,46 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
+/**
+ * Run labeled async jobs with a bounded concurrency. Logs one clean line per
+ * job start/finish so parallel ffmpeg passes stay readable. Rejects on the
+ * first job error (after in-flight jobs settle).
+ */
+async function runPool(concurrency, jobs) {
+  const limit = Math.max(1, Math.min(concurrency, jobs.length || 1));
+  let index = 0;
+  let firstError = null;
+
+  async function worker() {
+    while (index < jobs.length && !firstError) {
+      const current = index++;
+      const { label, task } = jobs[current];
+      const started = Date.now();
+      console.log(`[control-layer] start ${label}`);
+      try {
+        await task();
+        console.log(`[control-layer] done  ${label} (${Date.now() - started}ms)`);
+      } catch (error) {
+        if (!firstError) firstError = error;
+        console.warn(`[control-layer] fail  ${label}: ${error.message}`);
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: limit }, () => worker()));
+  if (firstError) throw firstError;
+}
+
 async function savePoseArtifacts(payload) {
   const analysisDir = payload.outputDir;
   if (!analysisDir || !fs.existsSync(analysisDir)) throw new Error('Analysis output folder is missing.');
+  // The renderer must only ever write into the app-managed workspace.
+  if (!security.isAllowedPath(analysisDir)) {
+    throw new Error('Analysis output folder is outside the app workspace.');
+  }
+  // resolution is validated upstream; retained for parity with the prepare step.
+  const resolution = validate.validateResolution(payload.resolution);
+  void resolution;
 
   const poseJsonPath = path.join(analysisDir, 'pose_landmarks.json');
   const cameraMotionJsonPath = path.join(analysisDir, 'camera_motion.json');
@@ -455,8 +536,8 @@ async function savePoseArtifacts(payload) {
   };
 
   const manifest = {
-    app: 'Motion Previs Studio v3',
-    version: '0.3.0',
+    app: APP_NAME,
+    version: APP_VERSION,
     createdAt: new Date().toISOString(),
     sourceName: payload.sourceName,
     range: payload.range,
@@ -630,33 +711,29 @@ function defaultShotBible(payload) {
   ];
 }
 
+// Single source of truth for the score: shared/quality.cjs. This fallback is
+// only used when the renderer does not supply planningData.qualityReport.
 function defaultQualityReport(payload) {
   const rawDetected = payload.poseData?.summary?.rawDetectedFrames ?? payload.poseData?.summary?.detectedFrames ?? 0;
   const filled = payload.poseData?.summary?.filledFrames || 0;
   const total = payload.poseData?.frames?.length || 0;
-  const poseRatio = total ? clamp(rawDetected / total + Math.min(filled / total, 0.18), 0, 1) : 0;
+  const tracking = quality.trackingScore(rawDetected, filled, total);
   const camera = payload.cameraMotionData?.summary?.averageConfidence || 0;
-  const score = Math.round((poseRatio * 0.34 + camera * 0.42 + 0.24) * 100);
-  return {
-    score,
-    tracking: qualityBand(poseRatio),
-    camera: qualityBand(camera),
-    layers: 'Excellent',
-    readiness: score >= 80 ? 'Ready' : score >= 60 ? 'Review' : 'Blocked',
-    notes: [
-      `Pose frames detected: ${rawDetected}/${total}`,
-      `Filled pose gaps: ${filled}`,
-      `Camera confidence: ${Math.round(camera * 100)}%`,
-      'Control layers generated: depth, edges, lineart, motion mask, normals proxy, pose, camera.'
-    ]
-  };
-}
-
-function qualityBand(value) {
-  if (value >= 0.82) return 'Excellent';
-  if (value >= 0.64) return 'Good';
-  if (value > 0) return 'Review';
-  return 'Missing';
+  const selectedLayers = payload.planningData?.selectedLayers;
+  const layerCount = Array.isArray(selectedLayers)
+    ? selectedLayers.length
+    : quality.LAYER_TARGET_COUNT; // assume full set of layers were generated
+  const layers = quality.layerScore(layerCount);
+  const cameraActive = Boolean(payload.cameraMotionData);
+  return quality.computeQualityReport({
+    tracking,
+    camera,
+    layers,
+    cameraActive,
+    rawDetectedFrames: rawDetected,
+    totalFrames: total,
+    filledFrames: filled
+  });
 }
 
 function modelPresets(payload) {
@@ -701,9 +778,8 @@ function controlLayerManifest(payload) {
       { key: 'camera', file: 'camera_motion.json', purpose: 'Subject-independent camera move.' },
       { key: 'edges', file: 'edges.mp4', purpose: 'Composition and silhouette edges.' },
       { key: 'lineart', file: 'lineart.mp4', purpose: 'High-contrast line control.' },
-      { key: 'masks', file: 'motion_mask.mp4', purpose: 'Motion/foreground proxy mask.' },
-      { key: 'normals', file: 'normals_proxy.mp4', purpose: 'Depth-gradient normals proxy.' },
-      { key: 'motion', file: 'motion_mask.mp4', purpose: 'Frame-difference motion proxy.' }
+      { key: 'masks', file: 'motion_mask.mp4', purpose: 'Motion/foreground proxy mask (frame-difference).' },
+      { key: 'normals', file: 'normals_proxy.mp4', purpose: 'Depth-gradient normals proxy.' }
     ]
   };
 }
@@ -902,13 +978,15 @@ function createWindow() {
     height: 940,
     minWidth: 1180,
     minHeight: 760,
-    title: 'Motion Previs Studio v3',
+    title: APP_NAME,
     backgroundColor: '#101214',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      webSecurity: false
+      // Media now loads over the privileged mps:// scheme (see security.cjs),
+      // so we can keep the renderer sandbox locked down.
+      webSecurity: true
     }
   });
 
@@ -920,25 +998,42 @@ function createWindow() {
   }
 }
 
+// Gate a shell:open/reveal target to allowlisted app/import paths only.
+function requireAllowedFsPath(targetPath, action) {
+  const clean = validate.requireString(targetPath, `${action} path`);
+  if (!security.isAllowedPath(clean)) {
+    throw new Error(`${action} refused: path is outside the app workspace and imported sources.`);
+  }
+  return clean;
+}
+
 app.whenReady().then(() => {
+  // Serve allowlisted files over mps:// (must be after 'ready').
+  security.installProtocolHandler(protocol);
+  // Ensure the workspace root is registered even before the first import.
+  workspaceRoot();
+
   app.setAboutPanelOptions({
-    applicationName: 'Motion Previs Studio v3',
+    applicationName: APP_NAME,
     applicationVersion: app.getVersion(),
     copyright: 'Developed and created by Sam Wasserman (Wasserman Productions / Wasserman.ai).',
     credits: 'Developed and created by Sam Wasserman. WassermanProductions.com / Wasserman.ai.'
   });
 
-  ipcMain.handle('dialog:open-media', openMediaFile);
-  ipcMain.handle('media:import-url', (_event, url) => importUrl(url));
-  ipcMain.handle('analysis:prepare', (_event, payload) => prepareAnalysis(payload));
-  ipcMain.handle('analysis:save-pose-artifacts', (_event, payload) => savePoseArtifacts(payload));
-  ipcMain.handle('shell:open-path', (_event, targetPath) => shell.openPath(targetPath));
-  ipcMain.handle('shell:reveal-path', (_event, targetPath) => shell.showItemInFolder(targetPath));
-  ipcMain.handle('shell:open-external', (_event, url) => openExternalUrl(url));
+  ipcMain.handle('dialog:open-media', () => openMediaFile());
+  ipcMain.handle('media:import-url', (_event, url) => importUrl(validate.requireString(url, 'url')));
+  ipcMain.handle('analysis:prepare', (_event, payload) => prepareAnalysis(validate.validatePreparePayload(payload)));
+  ipcMain.handle('analysis:save-pose-artifacts', (_event, payload) => savePoseArtifacts(validate.validateSavePosePayload(payload)));
+  ipcMain.handle('shell:open-path', (_event, targetPath) => shell.openPath(requireAllowedFsPath(targetPath, 'open-path')));
+  ipcMain.handle('shell:reveal-path', (_event, targetPath) => {
+    shell.showItemInFolder(requireAllowedFsPath(targetPath, 'reveal-path'));
+  });
+  ipcMain.handle('shell:open-external', (_event, url) => openExternalUrl(validate.requireString(url, 'url')));
   ipcMain.handle('app:versions', () => ({
     electron: process.versions.electron,
     chrome: process.versions.chrome,
     node: process.versions.node,
+    app: APP_VERSION,
     ffmpeg: ffmpegPath(),
     ffprobe: ffprobePath(),
     workspace: workspaceRoot()

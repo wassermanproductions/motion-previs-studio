@@ -1,4 +1,4 @@
-import type { AnalysisManifest, CameraMotionData, ExportResult, MediaInfo, PlanningData, PoseData } from './types';
+import type { AnalysisManifest, CameraMotionData, ExportResolution, ExportResult, MediaInfo, PlanningData, PoseData } from './types';
 
 declare global {
   interface Window {
@@ -10,6 +10,7 @@ declare global {
         start: number;
         end: number;
         sampleFps: number;
+        resolution?: ExportResolution;
       }) => Promise<AnalysisManifest>;
       savePoseArtifacts: (payload: {
         outputDir: string;
@@ -29,6 +30,7 @@ declare global {
         planningData?: PlanningData;
         poseVideoBuffer: ArrayBuffer;
         aiDepthVideoBuffer?: ArrayBuffer;
+        resolution?: ExportResolution;
       }) => Promise<ExportResult>;
       openPath: (targetPath: string) => Promise<string>;
       revealPath: (targetPath: string) => Promise<void>;
