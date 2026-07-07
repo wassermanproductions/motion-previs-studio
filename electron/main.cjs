@@ -1004,6 +1004,145 @@ if __name__ == "__main__":
 `;
 }
 
+// ---------------------------------------------------------------------------
+// Project session save / restore
+// ---------------------------------------------------------------------------
+// A single session.json lives at the workspace root and captures the last
+// imported media path, trim range, analysis settings, subjectMode, and last
+// bundle path so the app can offer to restore state on relaunch.
+
+function sessionPath() {
+  return path.join(workspaceRoot(), 'session.json');
+}
+
+function saveSession(session) {
+  if (!validate.isPlainObject(session)) {
+    throw new Error('Invalid request: session must be an object.');
+  }
+  // Only persist a known, JSON-safe shape; never trust arbitrary renderer input
+  // to be written verbatim beyond these fields.
+  const clean = {
+    version: APP_VERSION,
+    savedAt: new Date().toISOString(),
+    sourcePath: typeof session.sourcePath === 'string' ? session.sourcePath : null,
+    sourceName: typeof session.sourceName === 'string' ? session.sourceName : null,
+    range: validate.isPlainObject(session.range) ? session.range : null,
+    sampleFps: Number.isFinite(Number(session.sampleFps)) ? Number(session.sampleFps) : null,
+    subjectMode: typeof session.subjectMode === 'string' ? session.subjectMode : null,
+    poseSettings: validate.isPlainObject(session.poseSettings) ? session.poseSettings : null,
+    useCameraMove: typeof session.useCameraMove === 'boolean' ? session.useCameraMove : null,
+    selectedLayers: Array.isArray(session.selectedLayers) ? session.selectedLayers : null,
+    exportPresets: Array.isArray(session.exportPresets) ? session.exportPresets : null,
+    resolution: session.resolution === '720p' ? '720p' : 'auto',
+    planning: validate.isPlainObject(session.planning) ? session.planning : null,
+    lastBundlePath: typeof session.lastBundlePath === 'string' ? session.lastBundlePath : null
+  };
+  fs.writeFileSync(sessionPath(), JSON.stringify(clean, null, 2));
+  return { saved: true, path: sessionPath() };
+}
+
+function loadSession() {
+  const file = sessionPath();
+  if (!fs.existsSync(file)) return null;
+  try {
+    const session = JSON.parse(fs.readFileSync(file, 'utf8'));
+    // If the recorded source still exists, re-allow it so mps:// can serve it.
+    if (session && typeof session.sourcePath === 'string' && fs.existsSync(session.sourcePath)) {
+      security.allowImportSource(session.sourcePath);
+      session.sourceUrl = fileUrl(session.sourcePath);
+      session.sourceExists = true;
+    } else if (session) {
+      session.sourceExists = false;
+    }
+    return session;
+  } catch (error) {
+    console.warn(`Could not read session.json: ${error.message}`);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Send to Blockout (cross-app handoff)
+// ---------------------------------------------------------------------------
+// Blockout writes a control descriptor to ~/.config/blockout/control.json with
+// the local control server's { port, token }. We read it (main-process only,
+// never the renderer) and POST a set_reference control action.
+
+function blockoutControlPath() {
+  return path.join(os.homedir(), '.config', 'blockout', 'control.json');
+}
+
+function readBlockoutControl() {
+  const file = blockoutControlPath();
+  if (!fs.existsSync(file)) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function sendToBlockout(payload) {
+  if (!validate.isPlainObject(payload)) throw new Error('Invalid request: payload must be an object.');
+  const videoPath = validate.requireString(payload.videoPath, 'videoPath');
+  // The file must be inside our own workspace/imports allowlist — we never hand
+  // Blockout an arbitrary path the renderer made up.
+  if (!security.isAllowedPath(videoPath) || !fs.existsSync(videoPath)) {
+    throw new Error('Reference file is missing or outside the app workspace.');
+  }
+  const mode = payload.mode === 'pip' ? 'pip' : 'ghost';
+  const opacity = Number.isFinite(Number(payload.opacity)) ? clamp(Number(payload.opacity), 0, 1) : 0.5;
+
+  const control = readBlockoutControl();
+  if (!control || !control.port) {
+    const error = new Error('Blockout is not running. Open a Blockout project first, then try again.');
+    error.code = 'BLOCKOUT_UNAVAILABLE';
+    throw error;
+  }
+
+  const host = control.host || '127.0.0.1';
+  const base = `http://${host}:${control.port}`;
+  // Blockout's control server exposes POST /rpc with a bearer token and a
+  // { action, params } body; set_reference takes { path, mode, opacity }.
+  const body = JSON.stringify({
+    action: 'set_reference',
+    params: { path: videoPath, mode, opacity }
+  });
+  const headers = { 'Content-Type': 'application/json' };
+  if (control.token) headers.Authorization = `Bearer ${control.token}`;
+
+  let response;
+  try {
+    response = await fetch(`${base}/rpc`, { method: 'POST', headers, body });
+  } catch (error) {
+    const wrapped = new Error(`Could not reach Blockout control server: ${error.message}`);
+    wrapped.code = 'BLOCKOUT_UNAVAILABLE';
+    throw wrapped;
+  }
+  const text = await response.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    /* non-JSON response */
+  }
+  if (!response.ok) {
+    throw new Error(`Blockout rejected the reference (${response.status}): ${json?.error || text || 'unknown error'}`);
+  }
+  // The control server wraps the handler result as { ok, data } | { ok, error }.
+  if (json && json.ok === false) {
+    throw new Error(`Blockout could not attach the reference: ${json.error || 'unknown error'}`);
+  }
+  return { ok: true, mode, opacity, result: json && json.data !== undefined ? json.data : json };
+}
+
+function isBlockoutRunning() {
+  const control = readBlockoutControl();
+  return { available: Boolean(control && control.port) };
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1480,
@@ -1063,6 +1202,10 @@ app.whenReady().then(() => {
     shell.showItemInFolder(requireAllowedFsPath(targetPath, 'reveal-path'));
   });
   ipcMain.handle('shell:open-external', (_event, url) => openExternalUrl(validate.requireString(url, 'url')));
+  ipcMain.handle('project:save-session', (_event, session) => saveSession(session));
+  ipcMain.handle('project:load-session', () => loadSession());
+  ipcMain.handle('blockout:send-reference', (_event, payload) => sendToBlockout(payload));
+  ipcMain.handle('blockout:status', () => isBlockoutRunning());
   ipcMain.handle('app:versions', () => ({
     electron: process.versions.electron,
     chrome: process.versions.chrome,

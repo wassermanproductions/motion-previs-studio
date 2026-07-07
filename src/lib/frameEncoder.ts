@@ -22,6 +22,8 @@ export type EncodeFramesOptions = {
   renderFrame: FrameRenderer;
   /** Optional progress hook: (fraction 0..1, index, total). */
   onProgress?: (fraction: number, index: number, total: number) => void;
+  /** Optional cooperative-cancel signal; checked between frames. */
+  signal?: AbortSignal;
 };
 
 type EncoderBridge = {
@@ -57,7 +59,7 @@ function canvasToPngBytes(canvas: HTMLCanvasElement): Promise<ArrayBuffer> {
  * order; there is no timer and no captureStream, so the output is reproducible.
  */
 export async function encodeFrames(options: EncodeFramesOptions): Promise<Blob> {
-  const { canvas, renderFrame, onProgress } = options;
+  const { canvas, renderFrame, onProgress, signal } = options;
   const fps = Math.min(Math.max(Math.round(options.fps) || 12, 1), 60);
   const frameCount = Math.max(1, Math.floor(options.frameCount));
   const api = bridge();
@@ -65,6 +67,7 @@ export async function encodeFrames(options: EncodeFramesOptions): Promise<Blob> 
   const { sessionId } = await api.encodeFramesBegin({ fps, width: canvas.width, height: canvas.height });
   try {
     for (let index = 0; index < frameCount; index += 1) {
+      if (signal?.aborted) throw abortError();
       await renderFrame(index);
       const png = await canvasToPngBytes(canvas);
       await api.encodeFramesFrame({ sessionId, buffer: png });
@@ -81,6 +84,12 @@ export async function encodeFrames(options: EncodeFramesOptions): Promise<Blob> 
     }
     throw error;
   }
+}
+
+function abortError(): Error {
+  const error = new Error('Analysis cancelled.');
+  error.name = 'AbortError';
+  return error;
 }
 
 /** True when the deterministic encoder bridge is present (i.e. running in Electron). */

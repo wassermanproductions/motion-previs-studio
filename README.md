@@ -1,4 +1,8 @@
-# Motion Previs Studio v3
+<p align="center">
+  <img src="docs/logo.png" alt="Motion Previs Studio" width="180" />
+</p>
+
+# Motion Previs Studio v4
 
 Developed and created by **Sam Wasserman**.
 
@@ -7,9 +11,22 @@ Developed and created by **Sam Wasserman**.
 
 Open-source under the [Apache License 2.0](LICENSE). Please preserve the [NOTICE](NOTICE) file and cite Sam Wasserman when using or building on this work.
 
-Motion Previs Studio v3 is a standalone desktop app for turning source video shots into AI-film previsualization and control-reference bundles. It is built for filmmakers who want more precision before generating AI video: select a reference shot, extract pose, depth, camera movement, masks, edges, and control layers, then export a production pack for Seedance, ComfyUI, Blender, Runway, Kling, and similar workflows.
+Motion Previs Studio v4 is a standalone desktop app for turning source video shots into AI-film previsualization and control-reference bundles. It is built for filmmakers who want more precision before generating AI video: select a reference shot, extract pose, depth, camera movement, masks, edges, and control layers, then export a production pack for Seedance, ComfyUI, Blender, Runway, Kling, and similar workflows.
 
-This repository contains the v3 source code. Local signed app bundles and generated build artifacts are intentionally not committed.
+This repository contains the v4 source code. Local signed app bundles and generated build artifacts are intentionally not committed.
+
+## New in v4
+
+- **OpenPose / BODY_25 export.** Every bundle now ships a deterministic `openpose_pose.mp4` skeleton video plus per-frame `openpose_keypoints.json` in the standard OpenPose BODY_25 layout (75 numbers per person), for AI-video pipelines and ControlNet graphs that expect OpenPose input.
+- **Subject-masked optical-flow camera solve.** The camera move is solved with Lucas-Kanade optical flow and a RANSAC similarity fit, masking out the tracked subject so the reference camera pan/tilt/zoom/roll is recovered from the background rather than the actor.
+- **Deterministic frame encoding.** Control videos are encoded frame-by-frame through ffmpeg (no `captureStream`, no wall-clock timers), so exports are reproducible.
+- **Security hardening.** Custom `mps://` protocol with `webSecurity` on, an IPC allowlist, and a path allowlist for all file access.
+- **Send to Blockout.** After export, hand a Reference or Depth clip straight to a running [Blockout](https://github.com/wassermanproductions/blockout) session as a ghost underlay — one click, no files to shuffle.
+- **Real per-stage progress and cancel.** A live Prepare → Pose → Camera → Encode → Bundle rail with a working Cancel that aborts cleanly between frames.
+- **Project save / restore.** Sessions (media path, trim, settings, mode, last bundle) are written to the workspace and offered back for restore on relaunch; settings persist.
+- **720p export option.** Scale control layers so the short edge is 720 for Seedance-style targets, or keep the source long-edge scaling.
+- **One Reference Mode control.** A single segmented control — Camera only · Actor motion · Object motion · Full scene — with one-line explainers, replacing the old overlapping selectors.
+- **Branding + quick-start help.** App logo on the welcome and header, an in-app credit footer, and a skimmable `?` quick-start overlay.
 
 ## Screenshots
 
@@ -43,14 +60,14 @@ This repository contains the v3 source code. Local signed app bundles and genera
 1. Import a local clip or paste a compatible video URL.
 2. Choose the shot range you want to analyze.
 3. Pick the reference mode:
-   - `Camera`: preserve only the camera move and timing.
-   - `Actor`: preserve actor body motion and camera movement.
-   - `Object`: preserve object or vehicle path plus camera movement.
-   - `Scene`: preserve the full reference shot structure.
+   - `Camera only`: keep just the camera move and timing; replace the subject and world.
+   - `Actor motion`: preserve body/pose motion plus the camera move.
+   - `Object motion`: preserve an object or vehicle path plus the camera move.
+   - `Full scene`: preserve camera, blocking, subject motion, and depth rhythm.
 4. Select the control layers you want included.
-5. Run analysis.
+5. Run analysis (cancel any time; each stage reports real progress).
 6. Review pose, depth, camera, diagnostics, and quality metrics.
-7. Export the Production Pack.
+7. Export the Production Pack, then optionally Send to Blockout as a ghost reference.
 
 ## Exported Production Pack
 
@@ -67,6 +84,8 @@ Each export can include:
 - `contact_sheet.jpg`
 - `pose_high_contrast.webm`
 - `pose_high_contrast.mp4`
+- `openpose_pose.mp4` — OpenPose BODY_25 skeleton video
+- `openpose_keypoints.json` — per-frame OpenPose BODY_25 keypoints
 - `combined_reference_depth_pose.mp4`
 - `pose_landmarks.json`
 - pose analysis settings and diagnostics in `pose_landmarks.json`, `model_presets.json`, and `bundle_manifest.json`
@@ -118,14 +137,16 @@ npm run build
 npm run dist:dir
 ```
 
-The unpacked v3 desktop app is written to `release/mac-*` on macOS. Use `npm run dist` to create DMG/ZIP installers.
+The unpacked v4 desktop app is written to `release/mac-*` on macOS. Use `npm run dist` to create DMG/ZIP installers.
 
 ## QA
 
 ```bash
-npm run verify
-npm run verify:e2e
-npm run verify:all
+npm run verify           # smoke checks
+npm run verify:quality   # unified quality-score sync check
+npm run verify:engines   # engine/runtime checks
+npm run verify:e2e       # headless Electron export (asserts OpenPose mp4 + keypoints in the bundle)
+npm run verify:all       # verify + build + verify:e2e
 npm run screenshots
 ```
 
@@ -149,8 +170,6 @@ Standard open-source licenses cannot force every fork to display a prominent in-
 
 - Add a true shot-board view for multiple clips in one project.
 - Add batch processing for entire reference folders.
-- Add a stronger camera solve with optical flow and feature matching.
-- Add DWPose/OpenPose adapters for AI-video pipelines that prefer those skeleton formats.
 - Add ControlNet preset templates for common ComfyUI graphs.
 - Add a direct Blender export that creates a `.blend` file automatically.
 - Add team/project metadata and production notes per shot.
@@ -158,7 +177,7 @@ Standard open-source licenses cannot force every fork to display a prominent in-
 
 ## Attribution
 
-Motion Previs Studio v3 was developed and created by **Sam Wasserman** for **Wasserman Productions** and **Wasserman.ai**.
+Motion Previs Studio v4 was developed and created by **Sam Wasserman** for **Wasserman Productions** and **Wasserman.ai**.
 
 - [WassermanProductions.com](https://wassermanproductions.com)
 - [Wasserman.ai](https://wasserman.ai)

@@ -1,4 +1,5 @@
 import type { CameraMotionData, CameraMotionFrame, Landmark, PoseData, PoseFrame, ProgressFn } from '../types';
+import { throwIfAborted } from '../types';
 
 /**
  * Camera solve v2 (Motion Previs Studio v4).
@@ -48,7 +49,8 @@ export async function analyzeCameraMotionVideo(
   videoUrl: string,
   fps: number,
   progressOrPose?: ProgressFn | PoseData,
-  progressMaybe?: ProgressFn
+  progressMaybe?: ProgressFn,
+  signal?: AbortSignal
 ): Promise<CameraMotionData> {
   // Backward-compatible overloads:
   //   analyzeCameraMotionVideo(url, fps, progress)
@@ -84,6 +86,7 @@ export async function analyzeCameraMotionVideo(
     const frames: CameraMotionFrame[] = [];
 
     for (let index = 0; index < totalFrames; index += 1) {
+      throwIfAborted(signal);
       const time = Math.min(index / sampleFps, Math.max(duration - 0.001, 0));
       await seekVideo(video, time);
       ctx.drawImage(video, 0, 0, size.width, size.height);

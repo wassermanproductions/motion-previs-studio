@@ -92,6 +92,7 @@
     ],
     "mac": {
       "category": "public.app-category.video",
+      "icon": "build/icon.icns",
       "target": [
         "dmg",
         "zip"

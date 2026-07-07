@@ -14,7 +14,8 @@ export async function createAiDepthVideoBlob(
   fps: number,
   width: number,
   height: number,
-  progress?: ProgressFn
+  progress?: ProgressFn,
+  signal?: AbortSignal
 ) {
   const [{ RawImage }, estimator] = await Promise.all([import('@huggingface/transformers'), loadDepthEstimator(progress)]);
   const video = document.createElement('video');
@@ -52,6 +53,7 @@ export async function createAiDepthVideoBlob(
       canvas: outputCanvas,
       fps,
       frameCount: totalFrames,
+      signal,
       renderFrame: async (index) => {
         const time = Math.min(index / fps, Math.max(duration - 0.001, 0));
         await seekVideo(video, time);

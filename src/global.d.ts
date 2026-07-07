@@ -1,4 +1,14 @@
-import type { AnalysisManifest, CameraMotionData, ExportResolution, ExportResult, MediaInfo, PlanningData, PoseData } from './types';
+import type {
+  AnalysisManifest,
+  CameraMotionData,
+  ExportResolution,
+  ExportResult,
+  MediaInfo,
+  PlanningData,
+  PoseData,
+  ProjectSession,
+  SavedSession
+} from './types';
 
 declare global {
   interface Window {
@@ -41,6 +51,14 @@ declare global {
       revealPath: (targetPath: string) => Promise<void>;
       openExternal: (url: string) => Promise<void>;
       getVersions: () => Promise<Record<string, string>>;
+      saveSession: (session: ProjectSession) => Promise<{ saved: boolean; path: string }>;
+      loadSession: () => Promise<SavedSession | null>;
+      sendToBlockout: (payload: {
+        videoPath: string;
+        mode?: 'ghost' | 'pip';
+        opacity?: number;
+      }) => Promise<{ ok: boolean; mode: string; opacity: number; result?: unknown }>;
+      blockoutStatus: () => Promise<{ available: boolean }>;
     };
   }
 }
