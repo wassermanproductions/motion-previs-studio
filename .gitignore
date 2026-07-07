@@ -25,3 +25,7 @@ public/models/
 
 # Local preserved v1 source snapshot; the public repository is v2 source.
 src/App.v1.tsx
+
+# Private working notes — never commit
+FABLE_5_QA_REFERENCE.md
+*_QA_REFERENCE.md
