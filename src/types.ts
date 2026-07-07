@@ -205,4 +205,53 @@ export type ExportResult = {
   files: Record<string, string | null>;
 };
 
+// Persisted session written to the workspace so state can be restored on
+// relaunch. The renderer sends a ProjectSession; main writes it and returns a
+// SavedSession (adds resolved source URL / existence on load).
+export type ProjectSession = {
+  sourcePath?: string | null;
+  sourceName?: string | null;
+  range?: { start: number; end: number } | null;
+  sampleFps?: number | null;
+  subjectMode?: SubjectMode | null;
+  poseSettings?: PoseAnalysisSettings | null;
+  useCameraMove?: boolean | null;
+  selectedLayers?: ControlLayerKey[] | null;
+  exportPresets?: ExportPreset[] | null;
+  resolution?: ExportResolution | null;
+  planning?: {
+    projectTitle?: string;
+    sceneTitle?: string;
+    shotTitle?: string;
+    creativeIntent?: string;
+    visualStyle?: string;
+  } | null;
+  lastBundlePath?: string | null;
+};
+
+export type SavedSession = ProjectSession & {
+  version?: string;
+  savedAt?: string;
+  sourceUrl?: string;
+  sourceExists?: boolean;
+};
+
 export type ProgressFn = (progress: number, message: string) => void;
+
+// Cooperative cancellation for the long analysis/encode loops. Callers pass a
+// standard AbortSignal; the loops check it between frames and throw an Error
+// whose name is 'AbortError' so the app can distinguish a user cancel from a
+// real failure.
+export const CANCELLED_ERROR_NAME = 'AbortError';
+
+export function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    const error = new Error('Analysis cancelled.');
+    error.name = CANCELLED_ERROR_NAME;
+    throw error;
+  }
+}
+
+export function isCancelledError(error: unknown): boolean {
+  return error instanceof Error && error.name === CANCELLED_ERROR_NAME;
+}

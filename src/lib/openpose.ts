@@ -232,7 +232,8 @@ export async function renderOpenPoseFrames(
   poseData: PoseData,
   width: number,
   height: number,
-  progress?: ProgressFn
+  progress?: ProgressFn,
+  signal?: AbortSignal
 ): Promise<Blob> {
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -245,6 +246,7 @@ export async function renderOpenPoseFrames(
       canvas,
       fps: poseData.fps,
       frameCount: poseData.frames.length,
+      signal,
       renderFrame: (index) => {
         drawOpenPoseFrame(ctx, poseData.frames[index], width, height);
       },

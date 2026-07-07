@@ -104,7 +104,8 @@ export async function createPoseVideoBlob(
   poseData: PoseData,
   width: number,
   height: number,
-  progress?: ProgressFn
+  progress?: ProgressFn,
+  signal?: AbortSignal
 ): Promise<Blob> {
   const canvas = document.createElement('canvas');
   canvas.width = width;
@@ -117,6 +118,7 @@ export async function createPoseVideoBlob(
       canvas,
       fps: poseData.fps,
       frameCount: poseData.frames.length,
+      signal,
       renderFrame: (index) => {
         drawPoseFrame(ctx, poseData.frames[index], width, height);
       },

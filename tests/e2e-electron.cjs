@@ -74,7 +74,7 @@ async function main() {
       env: { ...process.env, ELECTRON_RENDERER_URL: rendererUrl }
     });
     await waitForWindow(electronApp);
-    await waitForRendererText(electronApp, 'Motion Previs Studio v3');
+    await waitForRendererText(electronApp, 'Motion Previs Studio v4');
     await captureMainWindow(electronApp, path.join(outputDir, 'electron-idle.png'));
 
     const analysis = await executeInRenderer(
@@ -118,8 +118,15 @@ async function main() {
         const cameraMotionData = ${JSON.stringify(cameraMotionData)};
         const planningData = ${JSON.stringify(planningData)};
         const { createPoseVideoBlob } = await import('/src/lib/poseVideo.ts');
-        const blob = await createPoseVideoBlob(poseData, analysis.frameSize.width, analysis.frameSize.height);
+        const { renderOpenPoseFrames, buildOpenPoseJson } = await import('/src/lib/openpose.ts');
+        const w = analysis.frameSize.width || 1280;
+        const h = analysis.frameSize.height || 720;
+        const blob = await createPoseVideoBlob(poseData, w, h);
         const poseVideoBuffer = await blob.arrayBuffer();
+        // v4: OpenPose/BODY_25 skeleton video + per-frame keypoints JSON.
+        const openPoseBlob = await renderOpenPoseFrames(poseData, w, h);
+        const openPoseVideoBuffer = await openPoseBlob.arrayBuffer();
+        const openPoseKeypoints = buildOpenPoseJson(poseData, w, h);
         return window.motionPrevis.savePoseArtifacts({
           outputDir: analysis.outputDir,
           referencePath: analysis.referencePath,
@@ -136,7 +143,9 @@ async function main() {
           poseData,
           cameraMotionData,
           planningData,
-          poseVideoBuffer
+          poseVideoBuffer,
+          openPoseVideoBuffer,
+          openPoseKeypoints
         });
       })()`
     );
@@ -166,6 +175,8 @@ async function main() {
       exportResult.files.qualityReport,
       exportResult.files.modelPresets,
       exportResult.files.controlLayersManifest,
+      exportResult.files.openPosePose,
+      exportResult.files.openPoseKeypoints,
       exportResult.files.edges,
       exportResult.files.lineart,
       exportResult.files.motionMask,
@@ -194,6 +205,24 @@ async function main() {
     const seedancePrompt = fs.readFileSync(exportResult.files.seedancePrompt, 'utf8');
     if (!seedancePrompt.includes('Subject mode: camera-only') || !seedancePrompt.includes('Preserve only the camera move')) {
       throw new Error('Seedance prompt did not preserve camera-only subject guidance.');
+    }
+
+    // v4: the OpenPose skeleton mp4 and BODY_25 keypoints JSON must land in the
+    // bundle by their canonical names.
+    const openPoseMp4 = path.join(exportResult.outputDir, 'openpose_pose.mp4');
+    const openPoseJson = path.join(exportResult.outputDir, 'openpose_keypoints.json');
+    if (!fs.existsSync(openPoseMp4)) throw new Error('openpose_pose.mp4 is missing from the bundle.');
+    if (!fs.existsSync(openPoseJson)) throw new Error('openpose_keypoints.json is missing from the bundle.');
+    const openPoseKeypoints = JSON.parse(fs.readFileSync(openPoseJson, 'utf8'));
+    if (!Array.isArray(openPoseKeypoints) || openPoseKeypoints.length !== poseData.frames.length) {
+      throw new Error('openpose_keypoints.json frame count does not match the pose track.');
+    }
+    const firstWithPeople = openPoseKeypoints.find((frame) => frame.people && frame.people.length);
+    if (firstWithPeople) {
+      const flat = firstWithPeople.people[0].pose_keypoints_2d;
+      if (!Array.isArray(flat) || flat.length !== 75) {
+        throw new Error('OpenPose keypoints are not BODY_25 (expected 75 numbers per person).');
+      }
     }
 
     console.log(

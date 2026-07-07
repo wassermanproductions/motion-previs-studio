@@ -1,5 +1,6 @@
 import { FilesetResolver, PoseLandmarker } from '@mediapipe/tasks-vision';
 import type { Landmark, PoseAnalysisSettings, PoseData, PoseFrame, PoseModelKey, PosePersonFrame, ProgressFn } from '../types';
+import { throwIfAborted } from '../types';
 
 export const DEFAULT_POSE_SETTINGS: PoseAnalysisSettings = {
   poseModel: 'lite',
@@ -133,7 +134,8 @@ export async function analyzePoseVideo(
   videoUrl: string,
   fps: number,
   settingsOrProgress?: Partial<PoseAnalysisSettings> | ProgressFn,
-  progressMaybe?: ProgressFn
+  progressMaybe?: ProgressFn,
+  signal?: AbortSignal
 ): Promise<PoseData> {
   const progress = typeof settingsOrProgress === 'function' ? settingsOrProgress : progressMaybe;
   const settings = normalizePoseSettings(typeof settingsOrProgress === 'function' ? undefined : settingsOrProgress);
@@ -155,6 +157,7 @@ export async function analyzePoseVideo(
     const rawFrames: PoseFrame[] = [];
 
     for (let index = 0; index < totalFrames; index += 1) {
+      throwIfAborted(signal);
       const time = Math.min(index / fps, Math.max(duration - 0.001, 0));
       await seekVideo(video, time);
       const timestampMs = timestampBaseMs + Math.round(time * 1000);
