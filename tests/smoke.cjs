@@ -5,9 +5,12 @@ const root = path.resolve(__dirname, '..');
 const required = [
   'electron/main.cjs',
   'electron/preload.cjs',
+  'electron/frameEncode.cjs',
   'src/App.tsx',
   'src/lib/pose.ts',
   'src/lib/poseVideo.ts',
+  'src/lib/openpose.ts',
+  'src/lib/frameEncoder.ts',
   'src/lib/cameraMotion.ts',
   'src/components/ThreePreview.tsx',
   'public/models/pose_landmarker_lite.task',

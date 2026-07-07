@@ -27,7 +27,8 @@
     "verify:e2e": "node tests/e2e-electron.cjs",
     "verify:all": "npm run verify && npm run build && npm run verify:e2e",
     "screenshots": "node tests/capture-screenshots.cjs",
-    "verify:quality": "node tests/quality-sync.cjs"
+    "verify:quality": "node tests/quality-sync.cjs",
+    "verify:engines": "node tests/engines.cjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

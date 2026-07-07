@@ -6,6 +6,7 @@ const { spawn } = require('node:child_process');
 const archiver = require('archiver');
 const security = require('./security.cjs');
 const validate = require('./validate.cjs');
+const frameEncode = require('./frameEncode.cjs');
 const quality = require('../shared/quality.cjs');
 const pkg = require('../package.json');
 
@@ -427,6 +428,9 @@ async function savePoseArtifacts(payload) {
   const cameraMotionJsonPath = path.join(analysisDir, 'camera_motion.json');
   const poseWebmPath = path.join(analysisDir, 'pose_high_contrast.webm');
   const poseMp4Path = path.join(analysisDir, 'pose_high_contrast.mp4');
+  const openPoseMp4Path = path.join(analysisDir, 'openpose_pose.mp4');
+  const openPoseWebmPath = path.join(analysisDir, 'openpose_pose.webm');
+  const openPoseKeypointsPath = path.join(analysisDir, 'openpose_keypoints.json');
   const aiDepthWebmPath = path.join(analysisDir, 'ai_depth.webm');
   const aiDepthMp4Path = path.join(analysisDir, 'ai_depth.mp4');
   const combinedPath = path.join(analysisDir, 'combined_reference_depth_pose.mp4');
@@ -458,22 +462,25 @@ async function savePoseArtifacts(payload) {
   fs.writeFileSync(modelPresetsPath, JSON.stringify(modelPresets(payload), null, 2));
   fs.writeFileSync(controlLayersPath, JSON.stringify(controlLayerManifest(payload), null, 2));
 
+  // The v4 deterministic encoder (electron/frameEncode.cjs) already returns an
+  // H.264 mp4; the legacy MediaRecorder path returned a WebM that needed a
+  // transcode. Detect which we got and write/transcode accordingly so both the
+  // new renderer and any old caller keep producing pose_high_contrast.mp4.
   if (payload.poseVideoBuffer) {
-    fs.writeFileSync(poseWebmPath, Buffer.from(payload.poseVideoBuffer));
-    try {
-      await run(ffmpegPath(), ['-y', '-i', poseWebmPath, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-an', poseMp4Path]);
-    } catch (error) {
-      console.warn(error.message);
-    }
+    await writeVideoArtifact(Buffer.from(payload.poseVideoBuffer), poseMp4Path, poseWebmPath);
   }
 
   if (payload.aiDepthVideoBuffer) {
-    fs.writeFileSync(aiDepthWebmPath, Buffer.from(payload.aiDepthVideoBuffer));
-    try {
-      await run(ffmpegPath(), ['-y', '-i', aiDepthWebmPath, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-an', aiDepthMp4Path]);
-    } catch (error) {
-      console.warn(error.message);
-    }
+    await writeVideoArtifact(Buffer.from(payload.aiDepthVideoBuffer), aiDepthMp4Path, aiDepthWebmPath);
+  }
+
+  // v4: optional OpenPose/BODY_25 render produced by the same deterministic
+  // encoder, plus the per-frame OpenPose keypoints JSON.
+  if (payload.openPoseVideoBuffer) {
+    await writeVideoArtifact(Buffer.from(payload.openPoseVideoBuffer), openPoseMp4Path, openPoseWebmPath);
+  }
+  if (payload.openPoseKeypoints) {
+    fs.writeFileSync(openPoseKeypointsPath, JSON.stringify(payload.openPoseKeypoints, null, 2));
   }
 
   const depthForCombined = fs.existsSync(aiDepthMp4Path) ? aiDepthMp4Path : payload.depthPath;
@@ -522,6 +529,8 @@ async function savePoseArtifacts(payload) {
     cameraMotionJson: fs.existsSync(cameraMotionJsonPath) ? cameraMotionJsonPath : null,
     poseWebm: fs.existsSync(poseWebmPath) ? poseWebmPath : null,
     poseMp4: fs.existsSync(poseMp4Path) ? poseMp4Path : null,
+    openPosePose: fs.existsSync(openPoseMp4Path) ? openPoseMp4Path : null,
+    openPoseKeypoints: fs.existsSync(openPoseKeypointsPath) ? openPoseKeypointsPath : null,
     combined: fs.existsSync(combinedPath) ? combinedPath : null,
     blenderImportScript: blenderScriptPath,
     blenderCameraImportScript: blenderCameraScriptPath,
@@ -564,6 +573,29 @@ async function savePoseArtifacts(payload) {
 function findSibling(folder, name) {
   const filePath = path.join(folder, name);
   return fs.existsSync(filePath) ? filePath : null;
+}
+
+/**
+ * Write an encoded video artifact to `mp4Path`. If `buffer` already holds an
+ * mp4 (the v4 deterministic encoder), write it straight through. Otherwise it
+ * is a legacy WebM: persist it at `webmPath` and transcode to mp4.
+ */
+async function writeVideoArtifact(buffer, mp4Path, webmPath) {
+  if (isMp4Buffer(buffer)) {
+    fs.writeFileSync(mp4Path, buffer);
+    return;
+  }
+  fs.writeFileSync(webmPath, buffer);
+  try {
+    await run(ffmpegPath(), ['-y', '-i', webmPath, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-an', mp4Path]);
+  } catch (error) {
+    console.warn(error.message);
+  }
+}
+
+// mp4/ISO-BMFF files start with a size box then the 'ftyp' brand at bytes 4-7.
+function isMp4Buffer(buffer) {
+  return buffer.length >= 12 && buffer.toString('ascii', 4, 8) === 'ftyp';
 }
 
 function zipDirectory(sourceDir, zipPath) {
@@ -1024,6 +1056,8 @@ app.whenReady().then(() => {
   ipcMain.handle('media:import-url', (_event, url) => importUrl(validate.requireString(url, 'url')));
   ipcMain.handle('analysis:prepare', (_event, payload) => prepareAnalysis(validate.validatePreparePayload(payload)));
   ipcMain.handle('analysis:save-pose-artifacts', (_event, payload) => savePoseArtifacts(validate.validateSavePosePayload(payload)));
+  // Deterministic PNG-stream -> H.264 encoder (replaces MediaRecorder).
+  frameEncode.register(ipcMain, ffmpegPath);
   ipcMain.handle('shell:open-path', (_event, targetPath) => shell.openPath(requireAllowedFsPath(targetPath, 'open-path')));
   ipcMain.handle('shell:reveal-path', (_event, targetPath) => {
     shell.showItemInFolder(requireAllowedFsPath(targetPath, 'reveal-path'));
@@ -1048,4 +1082,9 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
+});
+
+// Never leave an orphaned ffmpeg encode pipe behind.
+app.on('before-quit', () => {
+  frameEncode.disposeAllSessions();
 });

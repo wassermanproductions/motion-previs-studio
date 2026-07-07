@@ -1,5 +1,6 @@
 import type { Landmark, PoseData, PoseFrame, PosePersonFrame, ProgressFn } from '../types';
 import { POSE_CONNECTIONS, poseConnectionColor } from './pose';
+import { encodeFrames } from './frameEncoder';
 
 export function drawPoseFrame(ctx: CanvasRenderingContext2D, frame: PoseFrame | undefined, width: number, height: number) {
   ctx.save();
@@ -87,6 +88,18 @@ function frameToPerson(frame: PoseFrame): PosePersonFrame {
   };
 }
 
+/**
+ * Render the high-contrast MediaPipe skeleton to a deterministic H.264 mp4.
+ *
+ * v4: this used to capture a MediaRecorder off a canvas.captureStream on a
+ * wall-clock timer, which dropped/duplicated frames under load and produced a
+ * WebM. It now draws every frame and streams the PNGs to ffmpeg via the shared
+ * frame encoder, so the encoded frame count exactly equals the pose frame count
+ * and the output is reproducible. The return type stays `Blob` (now mp4 bytes),
+ * so callers doing `blob.arrayBuffer()` are unchanged — see App.tsx exportBundle
+ * and tests/e2e-electron.cjs. main's savePoseArtifacts detects the mp4 magic and
+ * writes it straight through instead of transcoding.
+ */
 export async function createPoseVideoBlob(
   poseData: PoseData,
   width: number,
@@ -99,40 +112,20 @@ export async function createPoseVideoBlob(
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Could not create pose render canvas.');
 
-  const mimeType = chooseMimeType();
-  const stream = canvas.captureStream(poseData.fps);
-  const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-  const chunks: BlobPart[] = [];
-  recorder.ondataavailable = (event) => {
-    if (event.data.size > 0) chunks.push(event.data);
-  };
-
-  const stopped = new Promise<void>((resolve) => {
-    recorder.onstop = () => resolve();
-  });
-
-  recorder.start();
-  const track = stream.getVideoTracks()[0] as MediaStreamTrack & { requestFrame?: () => void };
-  const delayMs = 1000 / poseData.fps;
-
-  for (let index = 0; index < poseData.frames.length; index += 1) {
-    drawPoseFrame(ctx, poseData.frames[index], width, height);
-    track.requestFrame?.();
-    progress?.(0.82 + (index / poseData.frames.length) * 0.12, `Rendering pose video ${index + 1}/${poseData.frames.length}`);
-    await delay(delayMs);
+  try {
+    return await encodeFrames({
+      canvas,
+      fps: poseData.fps,
+      frameCount: poseData.frames.length,
+      renderFrame: (index) => {
+        drawPoseFrame(ctx, poseData.frames[index], width, height);
+      },
+      onProgress: (fraction, index) => {
+        progress?.(0.82 + fraction * 0.12, `Rendering pose video ${index + 1}/${poseData.frames.length}`);
+      }
+    });
+  } finally {
+    canvas.width = 0;
+    canvas.height = 0;
   }
-
-  recorder.stop();
-  await stopped;
-  stream.getTracks().forEach((trackItem) => trackItem.stop());
-  return new Blob(chunks, { type: mimeType || 'video/webm' });
-}
-
-function chooseMimeType() {
-  const candidates = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
-  return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) || '';
-}
-
-function delay(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }

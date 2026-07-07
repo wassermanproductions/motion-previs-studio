@@ -1,4 +1,5 @@
 import type { ProgressFn } from '../types';
+import { encodeFrames } from './frameEncoder';
 
 type DepthImage = {
   resize: (width: number, height: number) => Promise<{ toCanvas: () => HTMLCanvasElement }>;
@@ -22,55 +23,74 @@ export async function createAiDepthVideoBlob(
   video.playsInline = true;
   video.preload = 'auto';
   video.src = videoUrl;
-  await waitForMetadata(video);
 
   const inputCanvas = document.createElement('canvas');
-  const maxInput = 384;
-  const sourceRatio = video.videoWidth / video.videoHeight;
-  inputCanvas.width = sourceRatio >= 1 ? maxInput : Math.round(maxInput * sourceRatio);
-  inputCanvas.height = sourceRatio >= 1 ? Math.round(maxInput / sourceRatio) : maxInput;
-  const inputCtx = inputCanvas.getContext('2d');
-  if (!inputCtx) throw new Error('Could not create AI depth input canvas.');
-
   const outputCanvas = document.createElement('canvas');
-  outputCanvas.width = width;
-  outputCanvas.height = height;
-  const outputCtx = outputCanvas.getContext('2d');
-  if (!outputCtx) throw new Error('Could not create AI depth output canvas.');
 
-  const stream = outputCanvas.captureStream(fps);
-  const recorder = new MediaRecorder(stream, chooseMimeType() ? { mimeType: chooseMimeType() } : undefined);
-  const chunks: BlobPart[] = [];
-  recorder.ondataavailable = (event) => {
-    if (event.data.size > 0) chunks.push(event.data);
-  };
-  const stopped = new Promise<void>((resolve) => {
-    recorder.onstop = () => resolve();
-  });
-  recorder.start();
-  const track = stream.getVideoTracks()[0] as MediaStreamTrack & { requestFrame?: () => void };
+  try {
+    await waitForMetadata(video);
 
-  const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 1;
-  const totalFrames = Math.max(1, Math.ceil(duration * fps));
-  for (let index = 0; index < totalFrames; index += 1) {
-    const time = Math.min(index / fps, Math.max(duration - 0.001, 0));
-    await seekVideo(video, time);
-    inputCtx.drawImage(video, 0, 0, inputCanvas.width, inputCanvas.height);
-    const raw = RawImage.fromCanvas(inputCanvas);
-    const outputRaw = await estimator(raw);
-    const output = Array.isArray(outputRaw) ? outputRaw[0] : outputRaw;
-    const depthImage = await output.depth.resize(width, height);
-    const depthCanvas = depthImage.toCanvas();
-    outputCtx.drawImage(depthCanvas, 0, 0, width, height);
-    track.requestFrame?.();
-    progress?.(0.7 + (index / totalFrames) * 0.12, `Rendering AI depth ${index + 1}/${totalFrames}`);
-    await delay(1000 / fps);
+    const maxInput = 384;
+    const sourceRatio = video.videoWidth / video.videoHeight;
+    inputCanvas.width = sourceRatio >= 1 ? maxInput : Math.round(maxInput * sourceRatio);
+    inputCanvas.height = sourceRatio >= 1 ? Math.round(maxInput / sourceRatio) : maxInput;
+    const inputCtx = inputCanvas.getContext('2d');
+    if (!inputCtx) throw new Error('Could not create AI depth input canvas.');
+
+    outputCanvas.width = width;
+    outputCanvas.height = height;
+    const outputCtx = outputCanvas.getContext('2d');
+    if (!outputCtx) throw new Error('Could not create AI depth output canvas.');
+
+    const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 1;
+    const totalFrames = Math.max(1, Math.ceil(duration * fps));
+
+    // v4: deterministic encode — one estimator pass per frame, streamed to
+    // ffmpeg as PNGs. No MediaRecorder/captureStream, so the exact frame count
+    // is preserved and the output is a reproducible H.264 mp4 (Blob).
+    return await encodeFrames({
+      canvas: outputCanvas,
+      fps,
+      frameCount: totalFrames,
+      renderFrame: async (index) => {
+        const time = Math.min(index / fps, Math.max(duration - 0.001, 0));
+        await seekVideo(video, time);
+        inputCtx.drawImage(video, 0, 0, inputCanvas.width, inputCanvas.height);
+        const raw = RawImage.fromCanvas(inputCanvas);
+        const outputRaw = await estimator(raw);
+        const output = Array.isArray(outputRaw) ? outputRaw[0] : outputRaw;
+        const depthImage = await output.depth.resize(width, height);
+        const depthCanvas = depthImage.toCanvas();
+        outputCtx.drawImage(depthCanvas, 0, 0, width, height);
+      },
+      onProgress: (fraction, index) => {
+        progress?.(0.7 + fraction * 0.12, `Rendering AI depth ${index + 1}/${totalFrames}`);
+      }
+    });
+  } finally {
+    releaseVideo(video);
+    inputCanvas.width = 0;
+    inputCanvas.height = 0;
+    outputCanvas.width = 0;
+    outputCanvas.height = 0;
   }
+}
 
-  recorder.stop();
-  await stopped;
-  stream.getTracks().forEach((item) => item.stop());
-  return new Blob(chunks, { type: chooseMimeType() || 'video/webm' });
+/** Release a hidden <video> element's resources. */
+function releaseVideo(video: HTMLVideoElement) {
+  try {
+    video.pause();
+  } catch {
+    /* ignore */
+  }
+  video.removeAttribute('src');
+  video.src = '';
+  try {
+    video.load();
+  } catch {
+    /* ignore */
+  }
+  video.remove();
 }
 
 async function loadDepthEstimator(progress?: ProgressFn): Promise<DepthEstimator> {
@@ -98,11 +118,6 @@ async function loadDepthEstimator(progress?: ProgressFn): Promise<DepthEstimator
     })();
   }
   return estimatorPromise;
-}
-
-function chooseMimeType() {
-  const candidates = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
-  return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) || '';
 }
 
 function waitForMetadata(video: HTMLVideoElement) {
@@ -138,8 +153,4 @@ function seekVideo(video: HTMLVideoElement, time: number) {
       requestAnimationFrame(done);
     }
   });
-}
-
-function delay(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
