@@ -1,7 +1,7 @@
 {
   "name": "motion-previs-studio",
-  "version": "0.3.0",
-  "description": "Motion Previs Studio v3 desktop app for video pose/depth/camera previs extraction and AI/Blender export bundles.",
+  "version": "4.0.0",
+  "description": "Motion Previs Studio v4 desktop app for video pose/depth/camera previs extraction and AI/Blender export bundles.",
   "author": "Sam Wasserman (Wasserman Productions / Wasserman.ai)",
   "license": "Apache-2.0",
   "repository": {
@@ -26,7 +26,8 @@
     "verify": "node tests/smoke.cjs",
     "verify:e2e": "node tests/e2e-electron.cjs",
     "verify:all": "npm run verify && npm run build && npm run verify:e2e",
-    "screenshots": "node tests/capture-screenshots.cjs"
+    "screenshots": "node tests/capture-screenshots.cjs",
+    "verify:quality": "node tests/quality-sync.cjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",
@@ -55,8 +56,8 @@
     "wait-on": "^8.0.1"
   },
   "build": {
-    "appId": "studio.motionprevis.app.v3",
-    "productName": "Motion Previs Studio v3",
+    "appId": "studio.motionprevis.app.v4",
+    "productName": "Motion Previs Studio v4",
     "npmRebuild": false,
     "directories": {
       "output": "release"
@@ -64,6 +65,7 @@
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "shared/**/*",
       "public/models/**/*",
       "public/mediapipe/**/*",
       "public/bin/**/*",

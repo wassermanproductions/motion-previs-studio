@@ -145,6 +145,10 @@ export type CameraMotionData = {
   };
 };
 
+// Optional export resolution. 'auto' keeps v3 long-edge scaling; '720p' scales
+// control-layer outputs so the SHORT edge is 720 (even dims) for Seedance.
+export type ExportResolution = 'auto' | '720p';
+
 export type SubjectMode = 'camera-only' | 'actor-motion' | 'object-motion' | 'full-scene';
 
 export type ExportPreset = 'seedance' | 'comfyui' | 'blender' | 'runway' | 'kling';
