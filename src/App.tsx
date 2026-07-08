@@ -51,6 +51,12 @@ import type {
   SubjectMode
 } from './types';
 import { isCancelledError } from './types';
+import type {
+  ControlSettingsPatch,
+  ControlState,
+  MpsControlSurface,
+  SendToBlockoutWhich
+} from './control/registry';
 import { createAiDepthVideoBlob } from './lib/aiDepth';
 import { analyzeCameraMotionVideo } from './lib/cameraMotion';
 import { buildOpenPoseJson, renderOpenPoseFrames } from './lib/openpose';
@@ -122,6 +128,10 @@ const CREDIT_LINE = 'Created by Sam Wasserman · wassermanproductions.com · was
 
 type Toast = { id: number; text: string; tone: 'ok' | 'error' };
 
+// The action half of the agent-control surface (the state half is ControlState).
+// Held in a ref and updated each render so window.__mps calls the current flows.
+type MpsControlActions = Omit<MpsControlSurface, 'getState'>;
+
 export function App() {
   const [source, setSource] = useState<MediaInfo | null>(null);
   const [analysis, setAnalysis] = useState<AnalysisManifest | null>(null);
@@ -157,6 +167,10 @@ export function App() {
   const referenceVideoRef = useRef<HTMLVideoElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const toastId = useRef(0);
+  // Latest snapshot + action implementations for the agent-control surface
+  // (window.__mps). Updated every render so the MCP handler always sees current
+  // state and calls into the same flows the UI uses.
+  const controlRef = useRef<{ state: ControlState; actions: MpsControlActions } | null>(null);
   // Guards a one-time settings restore so a load doesn't fight fresh edits.
   const restoredRef = useRef(false);
 
@@ -464,8 +478,8 @@ export function App() {
     }
   }
 
-  async function exportBundle() {
-    if (!analysis || !poseData) return;
+  async function exportBundle(): Promise<ExportResult | null> {
+    if (!analysis || !poseData) return null;
     const controller = new AbortController();
     abortRef.current = controller;
     const w = analysis.frameSize.width || 1280;
@@ -545,8 +559,10 @@ export function App() {
       setStage('exported');
       setMessage('Export bundle is ready.');
       window.motionPrevis?.saveSession({ ...buildSession(), lastBundlePath: saved.outputDir }).catch(() => undefined);
+      return saved;
     } catch (err) {
       handleAnalysisError(err);
+      throw err;
     } finally {
       abortRef.current = null;
     }
@@ -579,12 +595,30 @@ export function App() {
     setProgress(0);
   }
 
-  async function sendToBlockout(kind: 'reference' | 'depth') {
-    if (!exportResult) return;
+  // Resolve the export-bundle video for a Send-to-Blockout kind. Returns null
+  // when the requested layer wasn't produced in this bundle.
+  function blockoutVideoPath(kind: SendToBlockoutWhich): string | null {
+    if (!exportResult) return null;
     const files = exportResult.files;
-    const referencePath = typeof files.reference === 'string' ? files.reference : null;
-    const depthPath = (typeof files.aiDepthMp4 === 'string' && files.aiDepthMp4) || (typeof files.depth === 'string' ? files.depth : null);
-    const videoPath = kind === 'depth' ? depthPath : referencePath;
+    const pick = (value: string | null | undefined) => (typeof value === 'string' && value ? value : null);
+    switch (kind) {
+      case 'ai_depth':
+        return pick(files.aiDepthMp4);
+      case 'depth':
+        return pick(files.aiDepthMp4) || pick(files.depth);
+      case 'pose':
+        return pick(files.poseMp4);
+      case 'openpose':
+        return pick(files.openPosePose);
+      case 'reference':
+      default:
+        return pick(files.reference);
+    }
+  }
+
+  async function sendToBlockout(kind: SendToBlockoutWhich) {
+    if (!exportResult) return;
+    const videoPath = blockoutVideoPath(kind);
     if (!videoPath) {
       pushToast(`No ${kind} video available to send.`, 'error');
       return;
@@ -663,6 +697,156 @@ export function App() {
   const poseModelName = POSE_MODEL_OPTIONS.find((option) => option.key === poseSettings.poseModel)?.label.replace('MediaPipe Pose ', '') || 'Pose';
   const busy = isBusy(stage);
   const activeReferenceMode = REFERENCE_MODES.find((mode) => mode.key === subjectMode) || REFERENCE_MODES[0];
+
+  // --- Agent-control surface (window.__mps) -------------------------------
+  // Adopt an imported file/URL as the source through the exact same
+  // acceptSource path a manual import takes. Not memoized: controlRef.actions
+  // is rebuilt every render, so this always closes over current state.
+  const controlImport = (media: MediaInfo) => {
+    acceptSource(media);
+    return { name: media.name, duration: media.duration, width: media.width, height: media.height };
+  };
+
+  const controlState: ControlState = {
+    app: 'motion-previs-studio',
+    version: versions.app || '4.1.0',
+    media: source
+      ? { name: source.name, duration: source.duration, width: source.width, height: source.height }
+      : null,
+    range: { startS: range.start, endS: range.end },
+    referenceMode: subjectMode,
+    settings: {
+      sampleFps,
+      maxPeople: poseSettings.maxPeople,
+      smoothing: poseSettings.smoothing,
+      detectionConfidence: poseSettings.detectionConfidence,
+      trackingConfidence: poseSettings.trackingConfidence,
+      resolution,
+      depthModel: poseSettings.depthModel,
+      poseModel: poseSettings.poseModel,
+      useCameraMove
+    },
+    analysis: {
+      status: controlAnalysisStatus(stage),
+      stage: activeStage ?? undefined,
+      progress,
+      poseFrames: poseData?.frames.length,
+      detectedFrames: poseData?.summary.detectedFrames,
+      cameraConfidence: cameraMotionData?.summary.averageConfidence,
+      qualityScore: poseData ? qualityReport.score : undefined
+    },
+    lastBundlePath: exportResult?.outputDir ?? null,
+    blockoutAvailable,
+    conventions:
+      'Times in seconds. Workflow: import_file/import_url → set_range/set_mode/set_settings → run_analysis → poll get_state until analysis.status is done → export_pack → send_to_blockout.'
+  };
+
+  controlRef.current = {
+    state: controlState,
+    actions: {
+      importFile: async (path: string) => {
+        if (!window.motionPrevis?.importPath) throw new Error('Desktop bridge is not available.');
+        const media = await window.motionPrevis.importPath(path);
+        return controlImport(media);
+      },
+      importUrl: async (nextUrl: string) => {
+        if (!window.motionPrevis?.importUrl) throw new Error('Desktop bridge is not available.');
+        setStage('importing');
+        setMessage('Downloading web video with yt-dlp');
+        try {
+          const media = await window.motionPrevis.importUrl(nextUrl);
+          return controlImport(media);
+        } catch (err) {
+          fail(err);
+          throw err;
+        }
+      },
+      setRange: (startS: number, endS: number) => {
+        setRange({ start: startS, end: endS });
+        return { startS, endS };
+      },
+      setMode: (mode) => {
+        setSubjectMode(mode);
+        return { referenceMode: mode };
+      },
+      setSettings: (patch: ControlSettingsPatch) => {
+        if (patch.sampleFps !== undefined) setSampleFps(clamp(patch.sampleFps, 4, 24));
+        if (patch.resolution !== undefined) setResolution(patch.resolution);
+        setPoseSettings((current) => ({
+          ...current,
+          maxPeople: patch.maxPeople !== undefined ? clamp(patch.maxPeople, 1, 4) : current.maxPeople,
+          smoothing: patch.smoothing !== undefined ? clamp(patch.smoothing, 0, 0.95) : current.smoothing,
+          detectionConfidence:
+            patch.detectionConfidence !== undefined ? clamp(patch.detectionConfidence, 0.1, 0.9) : current.detectionConfidence,
+          trackingConfidence:
+            patch.trackingConfidence !== undefined ? clamp(patch.trackingConfidence, 0.1, 0.9) : current.trackingConfidence
+        }));
+        // Return the applied values (state setters are async; the current
+        // snapshot in controlRef.state still holds pre-update values).
+        const prev = controlRef.current!.state.settings;
+        return {
+          ...prev,
+          sampleFps: patch.sampleFps !== undefined ? clamp(patch.sampleFps, 4, 24) : prev.sampleFps,
+          resolution: patch.resolution !== undefined ? patch.resolution : prev.resolution,
+          maxPeople: patch.maxPeople !== undefined ? clamp(patch.maxPeople, 1, 4) : prev.maxPeople,
+          smoothing: patch.smoothing !== undefined ? clamp(patch.smoothing, 0, 0.95) : prev.smoothing,
+          detectionConfidence:
+            patch.detectionConfidence !== undefined ? clamp(patch.detectionConfidence, 0.1, 0.9) : prev.detectionConfidence,
+          trackingConfidence:
+            patch.trackingConfidence !== undefined ? clamp(patch.trackingConfidence, 0.1, 0.9) : prev.trackingConfidence
+        };
+      },
+      runAnalysis: () => {
+        if (!source) throw new Error('No media loaded — call import_file or import_url first.');
+        if (isBusy(stage)) throw new Error('The app is busy — analysis or export is already running.');
+        void runAnalysis();
+        return { started: true as const };
+      },
+      exportPack: async () => {
+        if (!analysis || !poseData) {
+          throw new Error('No completed analysis — call run_analysis and wait for status "done" first.');
+        }
+        if (isBusy(stage)) throw new Error('The app is busy — wait for the current run to finish.');
+        const saved = await exportBundle();
+        if (!saved) throw new Error('Export did not produce a bundle.');
+        return { bundlePath: saved.outputDir, zipPath: saved.zipPath };
+      },
+      listBundle: async () => {
+        const bundlePath = exportResult?.outputDir;
+        if (!bundlePath) throw new Error('No bundle yet — call export_pack first.');
+        const files = Object.values(exportResult!.files).filter((value): value is string => typeof value === 'string');
+        return { bundlePath, files };
+      },
+      sendToBlockout: async (which: SendToBlockoutWhich) => {
+        if (!exportResult) throw new Error('No bundle yet — call export_pack first.');
+        const videoPath = blockoutVideoPath(which);
+        if (!videoPath) throw new Error(`No ${which} video available in the current bundle.`);
+        if (!window.motionPrevis?.sendToBlockout) throw new Error('Desktop bridge is not available.');
+        const result = await window.motionPrevis.sendToBlockout({ videoPath, mode: 'ghost', opacity: 0.5 });
+        if (!result?.ok) throw new Error('Blockout did not accept the reference.');
+        return { ok: true as const, which, videoPath };
+      }
+    }
+  };
+
+  useEffect(() => {
+    const api: MpsControlSurface = {
+      getState: () => controlRef.current!.state,
+      importFile: (path) => controlRef.current!.actions.importFile(path),
+      importUrl: (nextUrl) => controlRef.current!.actions.importUrl(nextUrl),
+      setRange: (startS, endS) => controlRef.current!.actions.setRange(startS, endS),
+      setMode: (mode) => controlRef.current!.actions.setMode(mode),
+      setSettings: (patch) => controlRef.current!.actions.setSettings(patch),
+      runAnalysis: () => controlRef.current!.actions.runAnalysis(),
+      exportPack: () => controlRef.current!.actions.exportPack(),
+      listBundle: () => controlRef.current!.actions.listBundle(),
+      sendToBlockout: (which) => controlRef.current!.actions.sendToBlockout(which)
+    };
+    window.__mps = api;
+    return () => {
+      if (window.__mps === api) delete window.__mps;
+    };
+  }, []);
 
   return (
     <main className="app-shell">
@@ -1740,6 +1924,14 @@ function formatDisplayDate(value?: string) {
 
 function isBusy(stage: Stage) {
   return stage === 'importing' || stage === 'preparing' || stage === 'tracking' || stage === 'exporting';
+}
+
+// Map the fine-grained UI stage onto the coarse analysis status the agent polls.
+function controlAnalysisStatus(stage: Stage): ControlState['analysis']['status'] {
+  if (stage === 'preparing' || stage === 'tracking' || stage === 'exporting') return 'running';
+  if (stage === 'ready' || stage === 'exported') return 'done';
+  if (stage === 'error') return 'error';
+  return 'idle';
 }
 
 function clamp(value: number, min: number, max: number) {

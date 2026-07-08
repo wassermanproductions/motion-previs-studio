@@ -33,10 +33,14 @@ src/lib/            Pure-ish analysis modules, all locally runnable:
                     poseVideo.ts, frameEncoder.ts (deterministic ffmpeg frame encode),
                     quality.ts (single source of the unified quality score).
 src/components/     ThreePreview (three.js stick figure), PoseCanvas.
-electron/           main.cjs (window, IPC, ffmpeg, save/restore, Send to Blockout),
+src/control/        Agent-control renderer layer: registry.ts (the window.__mps surface
+                    contract), handler.ts (whitelisted action dispatcher, wired from main.tsx).
+electron/           main.cjs (window, IPC, ffmpeg, save/restore, Send to Blockout, control server wiring),
+                    control.cjs (localhost HTTP agent-control server + discovery file),
                     preload.cjs (window.motionPrevis bridge), security.cjs (path + IPC allowlist).
+mcp/                motion-previs-mcp.mjs (zero-dep stdio MCP bridge) + README.md (agent-integration guide).
 shared/             quality.cjs — the CJS mirror of src/lib/quality.ts (verify:quality checks they agree).
-tests/              e2e-electron.cjs (real export), smoke, quality-sync, engines.
+tests/              e2e-electron.cjs (real export + control-server smoke), smoke, quality-sync, engines.
 public/             generated MediaPipe/model/bin assets (gitignored).
 ```
 
@@ -51,6 +55,14 @@ public/             generated MediaPipe/model/bin assets (gitignored).
 ## Send to Blockout
 
 After export, the main process reads a sibling app's control descriptor at `~/.config/blockout/control.json` (`{ port, token }`) and POSTs a `set_reference` action (`{ path, mode, opacity }`) to Blockout's localhost control server. Only files inside the app workspace allowlist are sent. The UI shows a live availability dot and disables the buttons with a friendly toast when Blockout isn't running.
+
+## Agent control (MCP)
+
+The app is drivable by an external AI agent (Claude Code, Codex, Hermes) exactly like Blockout. On `whenReady`, `electron/control.cjs` starts a **localhost-only, token-gated HTTP control server** on a random port and writes `~/.config/motion-previs/control.json` (`{ port, token, pid, startedAt }`, mode `0600`, deleted on `will-quit`). `GET /health` is unauthenticated; `POST /rpc` is Bearer-auth'd and forwards `{ action, params }` to the renderer over the `control:invoke` / `control:result` IPC pair (correlation-id + per-action timeouts). `screenshot` is served main-side via `webContents.capturePage`.
+
+The renderer registers `registerControlHandler()` (`src/control/handler.ts`) from `main.tsx`; it dispatches whitelisted actions against the `window.__mps` surface that `App.tsx` publishes (`src/control/registry.ts` is the contract). **Every action runs the SAME flow as the equivalent UI click** — `import_file`/`import_url` reuse `acceptSource`, `run_analysis` calls `runAnalysis`, `export_pack` awaits `exportBundle`, `send_to_blockout` reuses the Send-to-Blockout IPC. Keep it that way: don't fork logic into the handler.
+
+The MCP bridge `mcp/motion-previs-mcp.mjs` is a zero-dependency Node ≥18 stdio server (newline-delimited JSON-RPC 2.0) that reads the discovery file and forwards `tools/call` to `/rpc`. 11 tools; see `mcp/README.md`. Whenever you add or change a control action, update the action list in `handler.ts`, the surface in `registry.ts`, the tool schema in the mjs, and the table in `mcp/README.md` together. Run `node --check mcp/motion-previs-mcp.mjs`.
 
 ## No private notes
 

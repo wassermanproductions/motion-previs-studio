@@ -27,6 +27,7 @@ This repository contains the v4 source code. Local signed app bundles and genera
 - **720p export option.** Scale control layers so the short edge is 720 for Seedance-style targets, or keep the source long-edge scaling.
 - **One Reference Mode control.** A single segmented control — Camera only · Actor motion · Object motion · Full scene — with one-line explainers, replacing the old overlapping selectors.
 - **Branding + quick-start help.** App logo on the welcome and header, an in-app credit footer, and a skimmable `?` quick-start overlay.
+- **Agent control (MCP).** A localhost-only, token-gated control server + zero-dependency MCP bridge lets Claude Code, Codex, or Hermes drive a running app — import a shot, set the range/mode/settings, run analysis, export the pack, and hand a clip to Blockout. See [`mcp/README.md`](mcp/README.md).
 
 ## Screenshots
 
@@ -105,6 +106,20 @@ Each export can include:
 ## Camera-Only Mode
 
 Camera-only mode is designed for cases where you like the movement of the reference shot but do not want to keep the same subject, vehicle, object, or environment. The app exports `camera_motion.json` and camera-specific prompt guidance so downstream tools can preserve pan, tilt, zoom, roll, timing, and shot rhythm while replacing the source content.
+
+## Agent Control (MCP)
+
+A running app can be driven by an AI agent (Claude Code, Codex, Hermes, or any MCP client) exactly like its sibling [Blockout](https://github.com/wassermanproductions/blockout). The main process runs a localhost-only, token-gated HTTP control server that advertises itself via `~/.config/motion-previs/control.json`, and a zero-dependency stdio MCP bridge (`mcp/motion-previs-mcp.mjs`) forwards tool calls to it.
+
+The agent gets 11 tools: `get_state`, `import_file`, `import_url`, `set_range`, `set_mode`, `set_settings`, `run_analysis`, `export_pack`, `list_bundle`, `send_to_blockout`, and `screenshot`. The workflow is import → set range/mode → `run_analysis` → poll `get_state` until done → `export_pack` → `send_to_blockout`.
+
+Connect it in one line:
+
+```bash
+claude mcp add motion-previs -- node "/ABSOLUTE/PATH/motion-previs-studio/mcp/motion-previs-mcp.mjs"
+```
+
+Full setup (Claude Code, Codex, Hermes, generic clients), the tool table, and a worked session are in [`mcp/README.md`](mcp/README.md). The app must be running for the tools to respond; the server binds `127.0.0.1` only and every request carries a bearer token, so nothing is exposed off-machine.
 
 ## Tech Stack
 

@@ -14,6 +14,7 @@ declare global {
   interface Window {
     motionPrevis?: {
       openMedia: () => Promise<MediaInfo | null>;
+      importPath: (sourcePath: string) => Promise<MediaInfo>;
       importUrl: (url: string) => Promise<MediaInfo>;
       prepareAnalysis: (payload: {
         sourcePath: string;
@@ -59,7 +60,12 @@ declare global {
         opacity?: number;
       }) => Promise<{ ok: boolean; mode: string; opacity: number; result?: unknown }>;
       blockoutStatus: () => Promise<{ available: boolean }>;
+      onControlInvoke: (
+        cb: (id: string, action: string, params: unknown) => void
+      ) => () => void;
+      controlResult: (id: string, result: { ok: boolean; data?: unknown; error?: string }) => void;
     };
+    __mps?: import('./control/registry').MpsControlSurface;
   }
 }
 

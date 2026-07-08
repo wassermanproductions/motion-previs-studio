@@ -7,6 +7,7 @@ const archiver = require('archiver');
 const security = require('./security.cjs');
 const validate = require('./validate.cjs');
 const frameEncode = require('./frameEncode.cjs');
+const control = require('./control.cjs');
 const quality = require('../shared/quality.cjs');
 const pkg = require('../package.json');
 
@@ -158,6 +159,23 @@ async function openMediaFile() {
   // shell:open/reveal can target it.
   security.allowImportSource(result.filePaths[0]);
   return probe(result.filePaths[0]);
+}
+
+// Import a specific media file by absolute path (agent-control entry point;
+// mirrors openMediaFile but skips the dialog). The path is validated to exist
+// and registered on the security allowlist so mps:// can serve it, exactly as a
+// user-chosen file would be.
+async function importMediaPath(sourcePath) {
+  const clean = validate.requireString(sourcePath, 'path');
+  if (!fs.existsSync(clean)) {
+    throw new Error(`No file at "${clean}".`);
+  }
+  const stat = fs.statSync(clean);
+  if (!stat.isFile()) {
+    throw new Error(`Path "${clean}" is not a file.`);
+  }
+  security.allowImportSource(clean);
+  return probe(clean);
 }
 
 async function importUrl(url) {
@@ -1192,6 +1210,7 @@ app.whenReady().then(() => {
   });
 
   ipcMain.handle('dialog:open-media', () => openMediaFile());
+  ipcMain.handle('media:import-path', (_event, sourcePath) => importMediaPath(sourcePath));
   ipcMain.handle('media:import-url', (_event, url) => importUrl(validate.requireString(url, 'url')));
   ipcMain.handle('analysis:prepare', (_event, payload) => prepareAnalysis(validate.validatePreparePayload(payload)));
   ipcMain.handle('analysis:save-pose-artifacts', (_event, payload) => savePoseArtifacts(validate.validateSavePosePayload(payload)));
@@ -1217,6 +1236,13 @@ app.whenReady().then(() => {
   }));
 
   createWindow();
+
+  // Agent-control HTTP server (MCP bridge). Localhost-only, token-gated; writes
+  // a discovery file at ~/.config/motion-previs/control.json. Failure to start
+  // must never take the app down — the UI works without it.
+  control
+    .startControlServer(() => mainWindow, { ipcMain, app, appName: 'motion-previs-studio', version: APP_VERSION })
+    .catch((error) => console.warn(`[motion-previs] control server failed to start: ${error.message}`));
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

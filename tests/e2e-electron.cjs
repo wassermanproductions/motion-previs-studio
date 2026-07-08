@@ -1,4 +1,5 @@
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
 const { spawn } = require('node:child_process');
@@ -6,6 +7,7 @@ const { _electron } = require('playwright');
 
 const root = path.resolve(__dirname, '..');
 const outputDir = path.join(root, 'output', 'playwright');
+const controlDiscoveryFile = path.join(os.homedir(), '.config', 'motion-previs', 'control.json');
 const samplePath = process.env.MPS_SAMPLE || '/tmp/codex-previs-xrefs/josh-followup.mp4';
 const planningData = {
   projectTitle: 'QA Motion Previs Project',
@@ -76,6 +78,9 @@ async function main() {
     await waitForWindow(electronApp);
     await waitForRendererText(electronApp, 'Motion Previs Studio v4');
     await captureMainWindow(electronApp, path.join(outputDir, 'electron-idle.png'));
+
+    // Agent-control server (MCP bridge backend) end-to-end over real HTTP.
+    const controlSummary = await runControlChecks();
 
     const analysis = await executeInRenderer(
       electronApp,
@@ -238,6 +243,7 @@ async function main() {
           selectedLayers: controlLayers.selectedLayers,
           outputDir: exportResult.outputDir,
           zipPath: exportResult.zipPath,
+          control: controlSummary,
           screenshots: [
             path.join(outputDir, 'electron-idle.png'),
             path.join(outputDir, 'electron-after-pipeline.png')
@@ -253,6 +259,152 @@ async function main() {
     }
     vite.kill('SIGTERM');
   }
+}
+
+// ---------------------------------------------------------------------------
+// Agent-control server checks — exercises electron/control.cjs + the renderer
+// control handler over real localhost HTTP, the same path the MCP bridge uses.
+// ---------------------------------------------------------------------------
+async function runControlChecks() {
+  const config = await readControlConfig();
+  const base = `http://127.0.0.1:${config.port}`;
+
+  // /health is unauthenticated.
+  const health = await fetch(`${base}/health`);
+  if (health.status !== 200) throw new Error(`control /health returned ${health.status}`);
+  const healthBody = await health.json();
+  if (!healthBody.ok || healthBody.app !== 'motion-previs-studio') {
+    throw new Error('control /health payload is wrong.');
+  }
+
+  // Bad token must be rejected.
+  const unauthorized = await fetch(`${base}/rpc`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer not-the-token' },
+    body: JSON.stringify({ action: 'get_state' })
+  });
+  if (unauthorized.status !== 401) throw new Error(`control /rpc bad token returned ${unauthorized.status}, expected 401`);
+
+  const rpc = async (action, params) => {
+    const res = await fetch(`${base}/rpc`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.token}` },
+      body: JSON.stringify({ action, params: params || {} })
+    });
+    const json = await res.json();
+    return { status: res.status, json };
+  };
+
+  // get_state before any media is loaded.
+  const state0 = await rpc('get_state');
+  if (state0.status !== 200 || !state0.json.ok) throw new Error('control get_state failed.');
+  if (state0.json.data.app !== 'motion-previs-studio') throw new Error('control get_state app name wrong.');
+
+  // Generate a tiny 2s clip so analysis is fast and self-contained.
+  const clipPath = path.join(outputDir, 'control-sample.mp4');
+  await generateSampleClip(clipPath);
+
+  const imported = await rpc('import_file', { path: clipPath });
+  if (!imported.json.ok) throw new Error(`control import_file failed: ${imported.json.error}`);
+  if (!imported.json.data.name) throw new Error('control import_file returned no media name.');
+
+  const ranged = await rpc('set_range', { startS: 0, endS: 2 });
+  if (!ranged.json.ok) throw new Error(`control set_range failed: ${ranged.json.error}`);
+
+  const moded = await rpc('set_mode', { mode: 'camera_only' });
+  if (!moded.json.ok || moded.json.data.referenceMode !== 'camera-only') {
+    throw new Error('control set_mode failed.');
+  }
+
+  const setSettings = await rpc('set_settings', { sampleFps: 6, resolution: 'auto' });
+  if (!setSettings.json.ok) throw new Error(`control set_settings failed: ${setSettings.json.error}`);
+
+  const started = await rpc('run_analysis');
+  if (!started.json.ok || started.json.data.started !== true) throw new Error('control run_analysis did not start.');
+
+  // Poll get_state until analysis is done (or error).
+  const deadline = Date.now() + 300000;
+  let status = 'running';
+  while (Date.now() < deadline) {
+    const poll = await rpc('get_state');
+    status = poll.json.data.analysis.status;
+    if (status === 'done') break;
+    if (status === 'error') throw new Error('control analysis reported error status.');
+    await delay(1000);
+  }
+  if (status !== 'done') throw new Error('control analysis did not reach done in time.');
+
+  const exported = await rpc('export_pack');
+  if (!exported.json.ok) throw new Error(`control export_pack failed: ${exported.json.error}`);
+  const bundlePath = exported.json.data.bundlePath;
+  const zipPath = exported.json.data.zipPath;
+  if (!bundlePath || !fs.existsSync(bundlePath)) throw new Error('control export_pack bundlePath missing on disk.');
+  if (!zipPath || !fs.existsSync(zipPath)) throw new Error('control export_pack zipPath missing on disk.');
+  for (const name of ['bundle_manifest.json', 'reference.mp4', 'pose_landmarks.json']) {
+    if (!fs.existsSync(path.join(bundlePath, name))) throw new Error(`control bundle missing ${name}.`);
+  }
+
+  const listed = await rpc('list_bundle');
+  if (!listed.json.ok || !Array.isArray(listed.json.data.files) || !listed.json.data.files.length) {
+    throw new Error('control list_bundle returned no files.');
+  }
+
+  const shot = await rpc('screenshot');
+  if (!shot.json.ok || typeof shot.json.data.imageBase64 !== 'string' || shot.json.data.imageBase64.length < 1000) {
+    throw new Error('control screenshot did not return a PNG base64 string.');
+  }
+
+  return {
+    port: config.port,
+    health: healthBody,
+    mediaName: imported.json.data.name,
+    analysisStatus: status,
+    bundlePath,
+    bundleFileCount: listed.json.data.files.length,
+    screenshotBytes: shot.json.data.imageBase64.length
+  };
+}
+
+async function readControlConfig() {
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    try {
+      const config = JSON.parse(fs.readFileSync(controlDiscoveryFile, 'utf8'));
+      if (config && config.port && config.token) return config;
+    } catch {
+      /* not written yet */
+    }
+    await delay(500);
+  }
+  throw new Error(`control discovery file never appeared at ${controlDiscoveryFile}`);
+}
+
+function generateSampleClip(outPath) {
+  const ffmpeg = require('ffmpeg-static');
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      ffmpeg,
+      [
+        '-y',
+        '-f', 'lavfi',
+        '-i', 'testsrc=size=320x240:rate=15:duration=2',
+        '-pix_fmt', 'yuv420p',
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',
+        outPath
+      ],
+      { stdio: ['ignore', 'ignore', 'pipe'] }
+    );
+    let stderr = '';
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) resolve(outPath);
+      else reject(new Error(`ffmpeg sample-clip generation exited ${code}\n${stderr}`));
+    });
+  });
 }
 
 async function waitForWindow(electronApp) {
