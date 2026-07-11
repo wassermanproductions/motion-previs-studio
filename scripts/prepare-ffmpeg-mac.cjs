@@ -24,6 +24,30 @@ async function main() {
     return;
   }
 
+  const prebuilt = recipe.prebuilt && recipe.prebuilt[arch];
+  if (prebuilt && !process.argv.includes('--build-from-source')) {
+    const mediaDir = path.join(root, 'runtime', 'media');
+    const work = fs.mkdtempSync(path.join(os.tmpdir(), 'mps-ffmpeg-mac-prebuilt-'));
+    try {
+      const archive = path.join(work, prebuilt.name);
+      run('curl', ['-fL', '--retry', '3', '--user-agent', 'motion-previs-ffmpeg-build/1', '-o', archive, prebuilt.url]);
+      if (!matches(archive, prebuilt.sha256)) {
+        throw new Error(`SHA-256 mismatch for ${prebuilt.name} (got ${sha256(archive)})`);
+      }
+      fs.mkdirSync(mediaDir, { recursive: true });
+      fs.rmSync(outDir, { recursive: true, force: true });
+      run('tar', ['-xzf', archive, '-C', mediaDir]);
+      if (!pairIsCurrent(outDir)) {
+        throw new Error(`${prebuilt.name} failed provenance validation against the pinned manifest`);
+      }
+      auditPair(outDir);
+      console.log(`[ffmpeg-mac] downloaded and audited darwin-${arch} media pair`);
+      return;
+    } finally {
+      fs.rmSync(work, { recursive: true, force: true });
+    }
+  }
+
   preflight();
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'mps-ffmpeg-mac-'));
   const cache = path.join(root, 'work', 'ffmpeg-source-cache');

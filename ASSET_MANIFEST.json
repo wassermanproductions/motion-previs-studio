@@ -121,7 +121,14 @@
           "url": "https://github.com/FFmpeg/FFmpeg/archive/7d0e8420048cffd0ca3883b877ead2390496d0b2.tar.gz",
           "sha256": "2caafb2bbfb69c0518470651640e71ac7f5fb3117d188bf6ea2d909307a02b1d"
         }
-      ]
+      ],
+      "prebuilt": {
+        "arm64": {
+          "name": "mps-ffmpeg-macos-arm64.tar.gz",
+          "url": "https://github.com/wassermanproductions/motion-previs-studio/releases/download/media-tools-1/mps-ffmpeg-macos-arm64.tar.gz",
+          "sha256": "58567a1382c368d978654bbaad820d1a99a458e07fbf9f7b5593399f54eb756a"
+        }
+      }
     },
     "windows": {
       "provider": "BtbN FFmpeg-Builds GPL",

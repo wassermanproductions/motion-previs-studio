@@ -171,7 +171,10 @@ discovery use the same app identity and config directory.
 
 MediaPipe and yt-dlp downloads are pinned and integrity checked. Windows uses
 a pinned, audited BtbN GPL-3.0-or-later FFmpeg/FFprobe pair. macOS packages
-build and audit a native GPL pair from a pinned, patched source recipe. Linux
+download the pinned, audited GPL FFmpeg/FFprobe pair automatically and re-run
+the full provenance and audit checks before use; pass `--build-from-source` to
+`npm run prepare:ffmpeg:mac` to rebuild the native pair from the pinned, patched
+source recipe instead. Linux
 development uses explicit runtime overrides or PATH and remains package-gated
 until an audited native asset recipe is supplied. See `THIRD_PARTY_NOTICES.md`
 and the release compliance bundle for source/provenance information.
@@ -229,4 +232,4 @@ Motion Previs Studio v4 was developed and created by **Sam Wasserman** for **Was
 - [WassermanProductions.com](https://wassermanproductions.com)
 - [Wasserman.ai](https://wasserman.ai)
 
-Windows desktop port contributed by **Gumbii Digital** ([github.com/GumbiiDigital](https://github.com/GumbiiDigital)) — see [MODIFICATIONS.md](MODIFICATIONS.md).
+Windows support contributed and maintained by **Gumbii Digital** ([github.com/GumbiiDigital](https://github.com/GumbiiDigital)) — see [MODIFICATIONS.md](MODIFICATIONS.md).
