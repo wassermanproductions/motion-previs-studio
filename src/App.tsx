@@ -1,3 +1,5 @@
+// Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md.
+
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Activity,

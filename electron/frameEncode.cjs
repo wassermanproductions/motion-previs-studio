@@ -1,5 +1,7 @@
 'use strict';
 
+// Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md.
+
 /**
  * Deterministic frame-to-mp4 encoder IPC for Motion Previs Studio v4.
  *

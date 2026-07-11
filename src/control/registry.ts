@@ -1,3 +1,5 @@
+// Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md.
+
 /**
  * The internal imperative control surface that App.tsx publishes on
  * `window.__mps`. The renderer control handler (src/control/handler.ts) reads

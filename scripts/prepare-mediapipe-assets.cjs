@@ -1,5 +1,7 @@
 'use strict';
 
+// Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md.
+
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');

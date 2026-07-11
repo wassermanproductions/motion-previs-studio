@@ -1,3 +1,5 @@
+// Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md.
+
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import fs from 'node:fs';

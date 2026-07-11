@@ -1,3 +1,5 @@
+<!-- Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md. -->
+
 # Motion Previs Studio MCP — drive the app from an AI agent
 
 Motion Previs Studio ships a small [MCP](https://modelcontextprotocol.io) server so an AI agent — **Claude Code, Codex, Hermes, or any MCP client** — can drive a **running** copy of the app: import a shot, trim the range, pick a reference mode, run the pose/depth/camera analysis, export the production pack, and hand a clip to Blockout. It's the same set of moves you'd make by hand, exposed as tools.

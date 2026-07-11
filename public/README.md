@@ -1,3 +1,5 @@
+<!-- Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md. -->
+
 # Motion Previs Studio Public Runtime Assets
 
 The app uses generated runtime assets under `public/mediapipe`, `public/models`,

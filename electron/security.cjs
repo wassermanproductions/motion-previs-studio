@@ -1,5 +1,7 @@
 'use strict';
 
+// Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md.
+
 /**
  * Security helpers for Motion Previs Studio v4.
  *

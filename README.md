@@ -1,3 +1,5 @@
+<!-- Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md. -->
+
 <p align="center">
   <img src="docs/logo.png" alt="Motion Previs Studio" width="180" />
 </p>

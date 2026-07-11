@@ -1,3 +1,5 @@
+// Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md.
+
 const fs = require('node:fs');
 const path = require('node:path');
 const { _electron } = require('playwright');

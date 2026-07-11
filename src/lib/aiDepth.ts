@@ -1,3 +1,5 @@
+// Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md.
+
 import type { ProgressFn } from '../types';
 import { encodeFrames } from './frameEncoder';
 import { createDevicePipelineWithFallback, createRetryableAsync, probeWebGpuAdapter } from './depthBackend.mjs';

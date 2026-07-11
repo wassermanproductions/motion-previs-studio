@@ -1,3 +1,5 @@
+// Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md.
+
 const { app, BrowserWindow, dialog, ipcMain, shell, protocol, Menu } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
