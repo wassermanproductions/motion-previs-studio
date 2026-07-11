@@ -1,5 +1,6 @@
 import type { ProgressFn } from '../types';
 import { encodeFrames } from './frameEncoder';
+import { createDevicePipelineWithFallback, createRetryableAsync } from './depthBackend.mjs';
 
 type DepthImage = {
   resize: (width: number, height: number) => Promise<{ toCanvas: () => HTMLCanvasElement }>;
@@ -7,7 +8,6 @@ type DepthImage = {
 
 type DepthEstimator = (input: unknown) => Promise<{ depth: DepthImage } | Array<{ depth: DepthImage }>>;
 
-let estimatorPromise: Promise<DepthEstimator> | null = null;
 const DEPTH_ANYTHING_REPOSITORY = 'Xenova/depth-anything-small-hf';
 export const DEPTH_ANYTHING_REVISION = '2e942621ab9f2371c1df9eb223291b5ac31475e6';
 
@@ -97,34 +97,32 @@ function releaseVideo(video: HTMLVideoElement) {
   video.remove();
 }
 
-async function loadDepthEstimator(progress?: ProgressFn): Promise<DepthEstimator> {
-  if (!estimatorPromise) {
-    estimatorPromise = (async () => {
-      progress?.(0.65, 'Loading Depth Anything model');
-      const { pipeline, env } = await import('@huggingface/transformers');
-      env.allowRemoteModels = true;
-      const options = {
-        dtype: 'q8' as const,
-        revision: DEPTH_ANYTHING_REVISION,
-        progress_callback: (event: { status?: string; file?: string; progress?: number }) => {
-          if (event.status === 'progress') {
-            progress?.(0.65, `Downloading depth model ${Math.round(event.progress || 0)}%`);
-          }
-        }
-      };
-      try {
-        return (await pipeline('depth-estimation', DEPTH_ANYTHING_REPOSITORY, {
-          ...options,
-          device: 'webgpu'
-        })) as unknown as DepthEstimator;
-      } catch (error) {
-        console.warn('[ai-depth] WebGPU unavailable; using pinned CPU fallback.', error);
-        return (await pipeline('depth-estimation', DEPTH_ANYTHING_REPOSITORY, options)) as unknown as DepthEstimator;
+const loadDepthEstimator = createRetryableAsync(async (progress?: ProgressFn): Promise<DepthEstimator> => {
+  progress?.(0.65, 'Loading Depth Anything model');
+  const { pipeline, env } = await import('@huggingface/transformers');
+  env.allowRemoteModels = true;
+  const options = {
+    dtype: 'q8' as const,
+    revision: DEPTH_ANYTHING_REVISION,
+    progress_callback: (event: { status?: string; file?: string; progress?: number }) => {
+      if (event.status === 'progress') {
+        progress?.(0.65, `Downloading depth model ${Math.round(event.progress || 0)}%`);
       }
-    })();
-  }
-  return estimatorPromise;
-}
+    }
+  };
+  return createDevicePipelineWithFallback<DepthEstimator>({
+    pipeline: pipeline as unknown as (
+      task: string,
+      repository: string,
+      options: Record<string, unknown>
+    ) => Promise<DepthEstimator>,
+    task: 'depth-estimation',
+    repository: DEPTH_ANYTHING_REPOSITORY,
+    options,
+    onFallback: (error) => console.warn('[ai-depth] WebGPU unavailable; using pinned CPU/WASM fallback.', error),
+    onCpuReady: () => console.info('[ai-depth] pinned CPU/WASM fallback ready.')
+  });
+});
 
 function waitForMetadata(video: HTMLVideoElement) {
   return new Promise<void>((resolve, reject) => {

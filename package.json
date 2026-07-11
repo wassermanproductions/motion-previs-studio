@@ -28,6 +28,7 @@
     "prepare:ffmpeg:mac": "node scripts/prepare-ffmpeg-mac.cjs",
     "verify:assets": "node scripts/prepare-mediapipe-assets.cjs --verify-only",
     "verify:metadata": "node tests/metadata.cjs",
+    "verify:depth-backend": "node tests/depth-backend.mjs",
     "verify:platform": "node tests/platform.cjs",
     "verify:encoder": "node tests/frame-encode.cjs",
     "verify:shutdown": "node tests/shutdown.cjs",
@@ -43,7 +44,7 @@
     "postinstall": "node scripts/prepare-mediapipe-assets.cjs",
     "verify": "node tests/smoke.cjs",
     "verify:e2e": "node tests/e2e-electron.cjs",
-    "verify:all": "npm run verify && npm run verify:quality && npm run verify:engines && npm run verify:platform && npm run verify:metadata && npm run verify:encoder && npm run verify:shutdown && npm run verify:process-tree && npm run verify:session && npm run verify:blockout && npm run verify:mcp-descriptor && npm run verify:assets && npm run build && npm run verify:e2e",
+    "verify:all": "npm run verify && npm run verify:quality && npm run verify:engines && npm run verify:platform && npm run verify:metadata && npm run verify:depth-backend && npm run verify:encoder && npm run verify:shutdown && npm run verify:process-tree && npm run verify:session && npm run verify:blockout && npm run verify:mcp-descriptor && npm run verify:assets && npm run build && npm run verify:e2e",
     "screenshots": "node tests/capture-screenshots.cjs",
     "verify:quality": "node tests/quality-sync.cjs",
     "verify:engines": "node tests/engines.cjs"

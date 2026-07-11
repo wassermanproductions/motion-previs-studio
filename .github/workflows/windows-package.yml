@@ -30,6 +30,7 @@ jobs:
       - run: npm ci
       - run: npm run verify:platform
       - run: npm run verify:metadata
+      - run: npm run verify:depth-backend
       - run: npm run verify:encoder
       - run: npm run verify:shutdown
       - run: npm run verify:process-tree
