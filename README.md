@@ -228,3 +228,5 @@ Motion Previs Studio v4 was developed and created by **Sam Wasserman** for **Was
 
 - [WassermanProductions.com](https://wassermanproductions.com)
 - [Wasserman.ai](https://wasserman.ai)
+
+Windows desktop port contributed by **Gumbii Digital** ([github.com/GumbiiDigital](https://github.com/GumbiiDigital)) — see [MODIFICATIONS.md](MODIFICATIONS.md).
