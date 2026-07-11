@@ -41,6 +41,31 @@ function Test-AppLaunch([string]$Exe, [string]$Label) {
   }
 }
 
+function Test-DefaultDistributionLaunch([string]$Exe, [string]$ConfigDir, [string]$UserDataDir, [string]$Label) {
+  Remove-Item (Join-Path $ConfigDir 'control.json') -Force -ErrorAction SilentlyContinue
+  $oldConfig = $env:MOTION_PREVIS_CONFIG_DIR
+  $oldUserData = $env:MOTION_PREVIS_USER_DATA_DIR
+  Remove-Item Env:MOTION_PREVIS_CONFIG_DIR -ErrorAction SilentlyContinue
+  Remove-Item Env:MOTION_PREVIS_USER_DATA_DIR -ErrorAction SilentlyContinue
+  try {
+    $started = Start-Process -FilePath $Exe -PassThru
+    $descriptorPath = Join-Path $ConfigDir 'control.json'
+    $deadline = (Get-Date).AddSeconds(45)
+    while ((Get-Date) -lt $deadline -and -not (Test-Path $descriptorPath)) { Start-Sleep -Milliseconds 500 }
+    Assert-True (Test-Path $descriptorPath) "$Label did not create its descriptor in the expected distribution config root."
+    $descriptor = Get-Content $descriptorPath -Raw | ConvertFrom-Json
+    Assert-True ($descriptor.protocolVersion -eq 1 -and $descriptor.app -eq 'motion-previs-studio') "$Label default descriptor identity is wrong."
+    $health = Invoke-RestMethod -Uri "http://127.0.0.1:$($descriptor.port)/health" -TimeoutSec 5
+    Assert-True ($health.ok) "$Label default health check failed."
+    Assert-True (Test-Path $UserDataDir) "$Label did not use the isolated distribution user-data root."
+    & taskkill.exe /PID $descriptor.pid /T /F | Out-Null
+    if ($started -and -not $started.HasExited) { $started.WaitForExit(10000) | Out-Null }
+  } finally {
+    $env:MOTION_PREVIS_CONFIG_DIR = $oldConfig
+    $env:MOTION_PREVIS_USER_DATA_DIR = $oldUserData
+  }
+}
+
 function Assert-Shortcut([string]$ShortcutPath, [string]$ExpectedTarget, [string]$Label) {
   Assert-True (Test-Path $ShortcutPath) "$Label shortcut was not created at $ShortcutPath."
   $shell = New-Object -ComObject WScript.Shell
@@ -55,6 +80,7 @@ function Assert-Shortcut([string]$ShortcutPath, [string]$ExpectedTarget, [string
 }
 
 Assert-True (Test-Path (Join-Path $Resources 'app.asar')) 'win-unpacked app.asar is missing.'
+Assert-True (Test-Path (Join-Path $Resources 'APP_METADATA.json')) 'installed MCP APP_METADATA.json is missing.'
 foreach ($name in @('ffmpeg.exe', 'ffprobe.exe', 'LICENSE.txt', 'PROVENANCE.json')) {
   Assert-True (Test-Path (Join-Path $Resources "media\$name")) "Bundled media asset $name is missing."
 }
@@ -73,6 +99,16 @@ Assert-True ($LASTEXITCODE -eq 0) 'Bundled ffprobe.exe did not run.'
 $UnpackedExe = Get-ChildItem $Unpacked -Filter '*.exe' | Where-Object Name -NotMatch 'uninstall' | Select-Object -First 1
 Assert-True ($null -ne $UnpackedExe) 'win-unpacked executable is missing.'
 Test-AppLaunch $UnpackedExe.FullName 'win-unpacked'
+
+if ($env:MOTION_PREVIS_EXPECTED_APP_ID) {
+  $appMetadata = Get-Content (Join-Path $Resources 'APP_METADATA.json') -Raw | ConvertFrom-Json
+  Assert-True ($appMetadata.version -eq $Package.version) 'Installed MCP metadata version does not match package.json.'
+  Assert-True ($appMetadata.distribution.appId -eq $env:MOTION_PREVIS_EXPECTED_APP_ID) 'Installed MCP metadata app ID is not the expected distribution ID.'
+  Assert-True ($appMetadata.distribution.configFolder -eq $env:MOTION_PREVIS_EXPECTED_CONFIG_SUBDIR) 'Installed MCP metadata config folder is wrong.'
+  $DefaultConfigDir = Join-Path $env:APPDATA $env:MOTION_PREVIS_EXPECTED_CONFIG_SUBDIR
+  $DefaultUserDataDir = Join-Path $env:APPDATA $env:MOTION_PREVIS_EXPECTED_USER_DATA_SUBDIR
+  Test-DefaultDistributionLaunch $UnpackedExe.FullName $DefaultConfigDir $DefaultUserDataDir 'win-unpacked community default'
+}
 
 $Installer = Get-ChildItem $Release -Filter '*.exe' | Where-Object FullName -NotLike "$Unpacked*" | Select-Object -First 1
 Assert-True ($null -ne $Installer) 'NSIS installer is missing.'

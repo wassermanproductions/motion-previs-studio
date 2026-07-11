@@ -59,6 +59,7 @@ function verifyResources(resources) {
   }
 
   assert.ok(fs.existsSync(path.join(resources, 'mcp', 'motion-previs-mcp.mjs')), 'MCP bridge must be packaged outside ASAR');
+  assert.ok(fs.existsSync(path.join(resources, 'APP_METADATA.json')), 'installed MCP app metadata must be packaged outside ASAR');
   const ytDlp = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
   assert.ok(fs.existsSync(path.join(resources, 'bin', ytDlp)), `bundled ${ytDlp} must be packaged outside ASAR`);
 
