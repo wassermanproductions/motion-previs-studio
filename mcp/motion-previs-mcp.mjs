@@ -11,13 +11,12 @@
  */
 
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { validateControlDescriptor } from './descriptor.mjs';
+import { motionDiscoveryFile } from './config.mjs';
 
 const appPackage = await readAppPackage();
 const APP_VERSION = appPackage.version;
-const DISCOVERY_FILE = motionDiscoveryFile();
+const DISCOVERY_FILE = motionDiscoveryFile(appPackage);
 const PROTOCOL_VERSION = '2024-11-05';
 
 async function readAppPackage() {
@@ -29,17 +28,6 @@ async function readAppPackage() {
     }
   }
   throw new Error('Motion Previs Studio app metadata is missing.');
-}
-
-function motionDiscoveryFile() {
-  const override = process.env.MOTION_PREVIS_CONFIG_DIR || process.env.MPS_CONFIG_DIR;
-  if (override) return join(override, 'control.json');
-  if (process.platform === 'win32') {
-    const appData = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming');
-    if (appPackage.distribution?.configFolder) return join(appData, appPackage.distribution.configFolder, 'control.json');
-    return join(appData, 'Motion Previs Studio', 'v4', 'control.json');
-  }
-  return join(homedir(), '.config', 'motion-previs', 'control.json');
 }
 
 /* --------------------------------- tools -------------------------------- */

@@ -13,6 +13,7 @@ const required = [
   'electron/blockoutProtocol.cjs',
   'mcp/motion-previs-mcp.mjs',
   'mcp/descriptor.mjs',
+  'mcp/config.mjs',
   'ASSET_MANIFEST.json',
   'src/App.tsx',
   'src/lib/pose.ts',
