@@ -27,9 +27,11 @@ const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
+const processTree = require('./processTree.cjs');
 
 // sessionId -> { child, tmpOut, fps, width, height, frames, done, error, ended }
 const sessions = new Map();
+let acceptingSessions = true;
 
 function fail(message) {
   throw new Error(`Invalid encode request: ${message}`);
@@ -61,6 +63,7 @@ function toBuffer(value, field) {
  * no dependency on ffmpeg-static resolution logic.
  */
 function beginSession(ffmpegBin, payload) {
+  if (!acceptingSessions) fail('encoder is shutting down.');
   if (!isPlainObject(payload)) fail('begin payload must be an object.');
   const fps = clamp(requireFiniteNumber(payload.fps, 'fps'), 1, 60);
   const width = clamp(Math.round(requireFiniteNumber(payload.width, 'width')), 2, 8192);
@@ -86,7 +89,7 @@ function beginSession(ffmpegBin, payload) {
     tmpOut
   ];
 
-  const child = spawn(ffmpegBin, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(ffmpegBin, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   let stderr = '';
   child.stderr.on('data', (chunk) => {
     stderr += chunk.toString();
@@ -183,12 +186,29 @@ async function endSession(payload) {
   }
 }
 
-function cleanup(session) {
+/** Cancel an encode, await ffmpeg termination, then remove its temporary files. */
+async function cancelSession(payload) {
+  if (!isPlainObject(payload)) fail('cancel payload must be an object.');
+  const session = sessions.get(payload.sessionId);
+  if (!session) return { cancelled: false };
+  session.ended = true;
   try {
-    if (!session.closed) session.child.kill('SIGKILL');
-  } catch {
-    /* ignore */
+    session.child.stdin.destroy();
+    const closed = await processTree.terminateChildTree(session.child, session.closePromise);
+    if (!closed) {
+      throw new Error('Timed out while terminating the ffmpeg encoder process tree; temporary files were retained.');
+    }
+    return { cancelled: true };
+  } finally {
+    if (session.closed) {
+      cleanup(session);
+      sessions.delete(payload.sessionId);
+    }
   }
+}
+
+function cleanup(session) {
+  if (!session.closed) return;
   try {
     fs.rmSync(session.tmpDir, { recursive: true, force: true });
   } catch {
@@ -197,11 +217,9 @@ function cleanup(session) {
 }
 
 /** Kill and drop every live session (called on app shutdown). */
-function disposeAllSessions() {
-  for (const session of sessions.values()) {
-    cleanup(session);
-  }
-  sessions.clear();
+async function disposeAllSessions() {
+  acceptingSessions = false;
+  await Promise.allSettled([...sessions.keys()].map((sessionId) => cancelSession({ sessionId })));
 }
 
 function clamp(value, min, max) {
@@ -216,6 +234,7 @@ function register(ipcMain, getFfmpegPath) {
   ipcMain.handle('analysis:encode-frames:begin', (_event, payload) => beginSession(getFfmpegPath(), payload));
   ipcMain.handle('analysis:encode-frames:frame', (_event, payload) => pushFrame(payload));
   ipcMain.handle('analysis:encode-frames:end', (_event, payload) => endSession(payload));
+  ipcMain.handle('analysis:encode-frames:cancel', (_event, payload) => cancelSession(payload));
 }
 
 module.exports = {
@@ -223,6 +242,8 @@ module.exports = {
   beginSession,
   pushFrame,
   endSession,
+  cancelSession,
   disposeAllSessions,
+  waitForChildClose: processTree.waitForChildClose,
   _sessions: sessions
 };

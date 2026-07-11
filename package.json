@@ -1,7 +1,7 @@
 {
   "name": "motion-previs-studio",
   "version": "4.1.0",
-  "description": "Motion Previs Studio v4 desktop app for video pose/depth/camera previs extraction and AI/Blender export bundles.",
+  "description": "Motion Previs Studio desktop app for video pose/depth/camera previs extraction and AI/Blender export bundles.",
   "author": "Sam Wasserman (Wasserman Productions / Wasserman.ai)",
   "license": "Apache-2.0",
   "repository": {
@@ -16,42 +16,60 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && ELECTRON_RENDERER_URL=http://127.0.0.1:5173 electron .\"",
+    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on tcp:5173 && cross-env ELECTRON_RENDERER_URL=http://127.0.0.1:5173 electron .\"",
     "start": "electron .",
-    "build": "tsc && vite build",
+    "build": "node scripts/prepare-app-metadata.cjs && tsc && vite build",
     "dist:dir": "npm run build && electron-builder --dir",
     "dist": "npm run build && electron-builder",
+    "package:mac": "npm run prepare:ffmpeg:mac && npm run build && npm run verify:assets && npm run verify:redistribution && electron-builder --config electron-builder.macos.cjs --mac --publish never",
+    "package:win": "npm run generate:icons && npm run build && npm run verify:assets && npm run verify:redistribution && electron-builder --config electron-builder.windows.cjs --win nsis --x64 --publish never",
+    "generate:icons": "node scripts/generate-icons.mjs",
     "prepare-assets": "node scripts/prepare-mediapipe-assets.cjs",
+    "prepare:ffmpeg:mac": "node scripts/prepare-ffmpeg-mac.cjs",
+    "verify:assets": "node scripts/prepare-mediapipe-assets.cjs --verify-only",
+    "verify:metadata": "node tests/metadata.cjs",
+    "verify:platform": "node tests/platform.cjs",
+    "verify:encoder": "node tests/frame-encode.cjs",
+    "verify:shutdown": "node tests/shutdown.cjs",
+    "verify:process-tree": "node tests/process-tree.cjs",
+    "verify:session": "node tests/session-restore.cjs",
+    "verify:blockout": "node tests/blockout-protocol.cjs",
+    "verify:mcp-descriptor": "node tests/mcp-descriptor.mjs",
+    "verify:package-layout": "node tests/package-layout.cjs",
+    "verify:redistribution": "node scripts/verify-media-redistribution.cjs",
+    "release:compliance": "node scripts/prepare-release-compliance.cjs",
+    "release:sources": "node scripts/download-release-sources.cjs",
+    "release:sbom": "node scripts/augment-release-sbom.cjs",
     "postinstall": "node scripts/prepare-mediapipe-assets.cjs",
     "verify": "node tests/smoke.cjs",
     "verify:e2e": "node tests/e2e-electron.cjs",
-    "verify:all": "npm run verify && npm run build && npm run verify:e2e",
+    "verify:all": "npm run verify && npm run verify:quality && npm run verify:engines && npm run verify:platform && npm run verify:metadata && npm run verify:encoder && npm run verify:shutdown && npm run verify:process-tree && npm run verify:session && npm run verify:blockout && npm run verify:mcp-descriptor && npm run verify:assets && npm run build && npm run verify:e2e",
     "screenshots": "node tests/capture-screenshots.cjs",
     "verify:quality": "node tests/quality-sync.cjs",
     "verify:engines": "node tests/engines.cjs"
   },
   "dependencies": {
-    "@huggingface/transformers": "^4.2.0",
-    "@mediapipe/tasks-vision": "^0.10.22-rc.20250304",
-    "archiver": "^7.0.1",
-    "archiver-utils": "^5.0.2",
-    "ffmpeg-static": "^5.2.0",
-    "ffprobe-static": "^3.1.0",
-    "lucide-react": "^0.468.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "three": "^0.171.0"
+    "archiver": "^7.0.1"
   },
   "devDependencies": {
+    "@huggingface/transformers": "4.2.0",
+    "@mediapipe/tasks-vision": "0.10.22-rc.20250304",
     "@types/node": "^22.10.5",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@types/three": "^0.185.0",
     "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.1.2",
-    "electron": "^33.2.1",
-    "electron-builder": "^25.1.8",
+    "cross-env": "7.0.3",
+    "electron": "43.1.0",
+    "electron-builder": "26.15.3",
+    "extract-zip": "2.0.1",
+    "lucide-react": "^0.468.0",
     "playwright": "^1.61.1",
+    "png-to-ico": "3.0.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "^0.171.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.7",
     "wait-on": "^8.0.1"
@@ -59,6 +77,7 @@
   "build": {
     "appId": "studio.motionprevis.app.v4",
     "productName": "Motion Previs Studio v4",
+    "artifactName": "Motion-Previs-Studio-${version}-${os}-${arch}.${ext}",
     "npmRebuild": false,
     "directories": {
       "output": "release"
@@ -67,28 +86,41 @@
       "dist/**/*",
       "electron/**/*",
       "shared/**/*",
-      "public/models/**/*",
-      "public/mediapipe/**/*",
-      "public/bin/**/*",
       "package.json"
     ],
     "extraResources": [
       {
-        "from": "public/models",
-        "to": "models"
-      },
-      {
-        "from": "public/mediapipe",
-        "to": "mediapipe"
-      },
-      {
-        "from": "public/bin",
+        "from": "runtime/bin",
         "to": "bin"
+      },
+      {
+        "from": "mcp",
+        "to": "mcp"
+      },
+      {
+        "from": "runtime/APP_METADATA.json",
+        "to": "APP_METADATA.json"
+      },
+      {
+        "from": "LICENSE",
+        "to": "LICENSE"
+      },
+      {
+        "from": "NOTICE",
+        "to": "NOTICE"
+      },
+      {
+        "from": "MODIFICATIONS.md",
+        "to": "MODIFICATIONS.md"
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
+      },
+      {
+        "from": "ASSET_MANIFEST.json",
+        "to": "ASSET_MANIFEST.json"
       }
-    ],
-    "asarUnpack": [
-      "node_modules/ffmpeg-static/**",
-      "node_modules/ffprobe-static/**"
     ],
     "mac": {
       "category": "public.app-category.video",
@@ -97,6 +129,27 @@
         "dmg",
         "zip"
       ]
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "requestedExecutionLevel": "asInvoker",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Motion Previs Studio v4"
     }
   }
 }

@@ -9,7 +9,7 @@
  * returned as JSON. This mirrors the proven Blockout pattern.
  *
  * Discovery + auth are file-based: on startup we write
- * ~/.config/motion-previs/control.json { port, token, pid, startedAt }
+ * the platform config directory as control.json (descriptor protocol v1)
  * (mode 0600) and delete it on quit. A client reads that file to learn the
  * random localhost port and bearer token. The server binds 127.0.0.1 only and
  * every /rpc request must carry the bearer token, so it is not reachable
@@ -20,10 +20,9 @@ const http = require('node:http');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const os = require('node:os');
+const config = require('./config.cjs');
 
-const CONFIG_DIR = path.join(os.homedir(), '.config', 'motion-previs');
-const DISCOVERY_FILE = path.join(CONFIG_DIR, 'control.json');
+const DISCOVERY_FILE = config.motionDiscoveryFile();
 const MAX_BODY = 64 * 1024 * 1024; // 64 MB (screenshots/base64 stay well under)
 
 // Per-action timeouts. Long-running pipelines legitimately take minutes.
@@ -51,6 +50,7 @@ async function startControlServer(getWindow, deps) {
   const { ipcMain, app, appName, version } = deps;
   const token = crypto.randomBytes(24).toString('hex');
   const pending = new Map();
+  const discoveryFile = config.motionDiscoveryFile();
 
   // Registered ONCE — a per-request listener would leak and double-resolve.
   ipcMain.on('control:result', (_event, id, result) => {
@@ -100,7 +100,7 @@ async function startControlServer(getWindow, deps) {
     };
 
     if (req.method === 'GET' && req.url === '/health') {
-      send(200, { ok: true, app: 'motion-previs-studio', version });
+      send(200, { ok: true, protocolVersion: 1, app: appName, appVersion: version });
       return;
     }
 
@@ -166,23 +166,34 @@ async function startControlServer(getWindow, deps) {
   const addr = server.address();
   const port = typeof addr === 'object' && addr ? addr.port : 0;
 
-  fs.mkdirSync(CONFIG_DIR, { recursive: true });
+  fs.mkdirSync(path.dirname(discoveryFile), { recursive: true });
+  const descriptor = {
+    protocolVersion: 1,
+    app: appName,
+    appVersion: version,
+    port,
+    token,
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    capabilities: ['health', 'rpc', 'screenshot', 'motion-to-blockout-v1']
+  };
   fs.writeFileSync(
-    DISCOVERY_FILE,
-    JSON.stringify({ port, token, pid: process.pid, startedAt: new Date().toISOString(), app: appName, version }),
+    discoveryFile,
+    JSON.stringify(descriptor, null, 2),
     { mode: 0o600 }
   );
 
   app.on('will-quit', () => {
     try {
-      fs.rmSync(DISCOVERY_FILE, { force: true });
+      const current = JSON.parse(fs.readFileSync(discoveryFile, 'utf8'));
+      if (current.token === token) fs.rmSync(discoveryFile, { force: true });
     } catch {
       /* best effort */
     }
   });
 
   console.log(`[motion-previs] control server on 127.0.0.1:${port}`);
-  return { port, token, discoveryFile: DISCOVERY_FILE };
+  return { port, token, discoveryFile, descriptor };
 }
 
 module.exports = { startControlServer, DISCOVERY_FILE };

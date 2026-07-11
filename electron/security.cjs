@@ -14,7 +14,6 @@
 
 const path = require('node:path');
 const fs = require('node:fs');
-const { pathToFileURL } = require('node:url');
 
 const SCHEME = 'mps';
 
@@ -23,11 +22,13 @@ const allowedRoots = new Set();
 // Individual absolute file paths that are allowed (specific imported sources).
 const allowedFiles = new Set();
 
-function normalizeAbsolute(input) {
+function normalizeAbsolute(input, { mustExist = false } = {}) {
   if (typeof input !== 'string' || !input.trim()) return null;
   try {
     // Resolve to an absolute, normalized path (collapses .. and .).
-    return path.resolve(input);
+    const resolved = path.resolve(input);
+    if (!fs.existsSync(resolved)) return mustExist ? null : resolved;
+    return fs.realpathSync.native ? fs.realpathSync.native(resolved) : fs.realpathSync(resolved);
   } catch {
     return null;
   }
@@ -35,7 +36,7 @@ function normalizeAbsolute(input) {
 
 /** Register a directory root; everything beneath it becomes loadable/openable. */
 function allowRoot(dir) {
-  const abs = normalizeAbsolute(dir);
+  const abs = normalizeAbsolute(dir, { mustExist: true });
   if (abs) allowedRoots.add(abs);
   return abs;
 }
@@ -44,7 +45,7 @@ function allowRoot(dir) {
  *  is NOT added — only the exact file and files that share the recorded dir are
  *  allowed via allowImportSource). */
 function allowFile(filePath) {
-  const abs = normalizeAbsolute(filePath);
+  const abs = normalizeAbsolute(filePath, { mustExist: true });
   if (abs) allowedFiles.add(abs);
   return abs;
 }
@@ -62,43 +63,89 @@ function allowImportSource(filePath, { dirAsRoot = false } = {}) {
   return abs;
 }
 
-function isPathWithinRoot(candidateAbs, rootAbs) {
-  if (candidateAbs === rootAbs) return true;
-  const rel = path.relative(rootAbs, candidateAbs);
-  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+function isPathWithinRoot(candidateAbs, rootAbs, platform = process.platform) {
+  const p = platform === 'win32' ? path.win32 : path;
+  const normalizeForCompare = (value) => (platform === 'win32' ? value.toLowerCase() : value);
+  if (normalizeForCompare(candidateAbs) === normalizeForCompare(rootAbs)) return true;
+  const rel = p.relative(rootAbs, candidateAbs);
+  return rel !== '' && !rel.startsWith('..') && !p.isAbsolute(rel);
 }
 
 /** True if an absolute path is permitted by the current allowlist. */
 function isAllowedPath(input) {
-  const abs = normalizeAbsolute(input);
+  // Canonicalize the existing target before comparing. On Windows this resolves
+  // directory junctions, preventing a lexical child path from escaping a root.
+  const abs = normalizeAbsolute(input, { mustExist: true });
   if (!abs) return false;
-  if (allowedFiles.has(abs)) return true;
+  if (hasPath(allowedFiles, abs)) return true;
   for (const root of allowedRoots) {
     if (isPathWithinRoot(abs, root)) return true;
   }
   return false;
 }
 
+/** Return the canonical path only when it is an allowlisted regular file. */
+function canonicalAllowedFile(input) {
+  const abs = normalizeAbsolute(input, { mustExist: true });
+  if (!abs || !isAllowedPath(abs)) return null;
+  try {
+    return fs.statSync(abs).isFile() ? abs : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Return the canonical path only when it is an allowlisted directory. */
+function canonicalAllowedDirectory(input) {
+  const abs = normalizeAbsolute(input, { mustExist: true });
+  if (!abs || !isAllowedPath(abs)) return null;
+  try {
+    return fs.statSync(abs).isDirectory() ? abs : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Convert an absolute path to an mps:// URL. */
 function toAppUrl(filePath) {
-  const abs = normalizeAbsolute(filePath);
+  const abs = normalizeAbsolute(filePath, { mustExist: true });
   if (!abs) throw new Error('Cannot build media URL for empty path.');
-  // Reuse pathToFileURL to get correct percent-encoding, then swap the scheme
-  // and move the path into the URL path (host stays empty).
-  const fileUrl = pathToFileURL(abs);
-  return `${SCHEME}://media${fileUrl.pathname}`;
+  // Store the complete absolute path as a URL query value. Unlike translating
+  // a file:// pathname, this preserves Windows drive letters and UNC hosts.
+  const url = new URL(`${SCHEME}://media/file`);
+  url.searchParams.set('path', abs);
+  return url.href;
 }
 
 /** Decode an mps:// request URL back to an absolute filesystem path. */
-function urlToPath(requestUrl) {
+function urlToPath(requestUrl, platform = process.platform) {
+  const pApi = platform === 'win32' ? path.win32 : path;
   const parsed = new URL(requestUrl);
+  if (parsed.protocol !== `${SCHEME}:` || parsed.hostname !== 'media') {
+    throw new Error('Invalid Motion Previs media URL.');
+  }
+  const encodedPath = parsed.searchParams.get('path');
+  if (encodedPath) {
+    if (!pApi.isAbsolute(encodedPath)) throw new Error('Media URL path must be absolute.');
+    return pApi.normalize(encodedPath);
+  }
+  // Backward compatibility for URLs written by v4.1.0 and earlier.
   // pathname is percent-encoded and starts with '/'. On Windows the drive letter
   // path is like /C:/... ; decodeURIComponent + normalize handles both.
   let p = decodeURIComponent(parsed.pathname);
-  if (process.platform === 'win32' && /^\/[A-Za-z]:/.test(p)) {
+  if (platform === 'win32' && /^\/[A-Za-z]:/.test(p)) {
     p = p.slice(1);
   }
-  return path.normalize(p);
+  return pApi.normalize(p);
+}
+
+function hasPath(set, candidate) {
+  if (process.platform !== 'win32') return set.has(candidate);
+  const folded = candidate.toLowerCase();
+  for (const item of set) {
+    if (item.toLowerCase() === folded) return true;
+  }
+  return false;
 }
 
 const CONTENT_TYPES = {
@@ -238,7 +285,11 @@ module.exports = {
   allowRoot,
   allowFile,
   allowImportSource,
+  normalizeAbsolute,
+  isPathWithinRoot,
   isAllowedPath,
+  canonicalAllowedFile,
+  canonicalAllowedDirectory,
   toAppUrl,
   urlToPath,
   registerPrivilegedScheme,

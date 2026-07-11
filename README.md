@@ -11,7 +11,7 @@ Developed and created by **Sam Wasserman**.
 
 Open-source under the [Apache License 2.0](LICENSE). Please preserve the [NOTICE](NOTICE) file and cite Sam Wasserman when using or building on this work.
 
-Motion Previs Studio v4 is a standalone desktop app for turning source video shots into AI-film previsualization and control-reference bundles. It is built for filmmakers who want more precision before generating AI video: select a reference shot, extract pose, depth, camera movement, masks, edges, and control layers, then export a production pack for Seedance, ComfyUI, Blender, Runway, Kling, and similar workflows.
+Motion Previs Studio v4 is a cross-platform desktop app for turning source video shots into AI-film previsualization and control-reference bundles. It is built for filmmakers who want more precision before generating AI video: select a reference shot, extract pose, depth, camera movement, masks, edges, and control layers, then export a production pack for Seedance, ComfyUI, Blender, Runway, Kling, and similar workflows.
 
 This repository contains the v4 source code. Local signed app bundles and generated build artifacts are intentionally not committed.
 
@@ -109,7 +109,7 @@ Camera-only mode is designed for cases where you like the movement of the refere
 
 ## Agent Control (MCP)
 
-A running app can be driven by an AI agent (Claude Code, Codex, Hermes, or any MCP client) exactly like its sibling [Blockout](https://github.com/wassermanproductions/blockout). The main process runs a localhost-only, token-gated HTTP control server that advertises itself via `~/.config/motion-previs/control.json`, and a zero-dependency stdio MCP bridge (`mcp/motion-previs-mcp.mjs`) forwards tool calls to it.
+A running app can be driven by an AI agent (Claude Code, Codex, Hermes, or any MCP client) exactly like its sibling [Blockout](https://github.com/wassermanproductions/blockout). The main process runs a localhost-only, token-gated HTTP control server that advertises protocol v1 via `~/.config/motion-previs/control.json` on macOS/Linux or `%APPDATA%\Motion Previs Studio\v4\control.json` on Windows. A zero-dependency stdio MCP bridge (`mcp/motion-previs-mcp.mjs`) forwards tool calls to it.
 
 The agent gets 11 tools: `get_state`, `import_file`, `import_url`, `set_range`, `set_mode`, `set_settings`, `run_analysis`, `export_pack`, `list_bundle`, `send_to_blockout`, and `screenshot`. The workflow is import → set range/mode → `run_analysis` → poll `get_state` until done → `export_pack` → `send_to_blockout`.
 
@@ -139,7 +139,7 @@ npm install
 npm run dev
 ```
 
-`npm install` runs `scripts/prepare-mediapipe-assets.cjs`, which populates generated runtime assets under `public/mediapipe`, `public/models`, and `public/bin`. These generated assets are ignored by git and can be recreated with:
+`npm install` runs `scripts/prepare-mediapipe-assets.cjs`, which populates generated runtime assets under `public/mediapipe`, `public/models`, and `runtime/bin`. Every downloaded executable/model is pinned and SHA-256 verified against `ASSET_MANIFEST.json`. These generated assets are ignored by git and can be recreated with:
 
 ```bash
 npm run prepare-assets
@@ -152,7 +152,27 @@ npm run build
 npm run dist:dir
 ```
 
-The unpacked v4 desktop app is written to `release/mac-*` on macOS. Use `npm run dist` to create DMG/ZIP installers.
+Use `npm run package:mac` for DMG/ZIP artifacts or `npm run package:win` on a
+Windows 11 x64 host for the unsigned, assisted per-user NSIS installer. Windows
+packages must be built after a fresh `npm ci` on Windows; do not reuse a macOS
+`node_modules` tree.
+
+The Windows installer does not require administrator rights, allows the install
+folder to be selected, and creates Start Menu and desktop shortcuts. Because the
+initial builds are unsigned, Windows SmartScreen may show an “unrecognized app”
+warning. Verify the published SHA-256 before choosing **More info → Run anyway**.
+
+Downstream packagers can set `MOTION_PREVIS_BUILDER_CONFIG` to an Electron
+Builder configuration before `npm run build`; its `extraMetadata.distribution`
+value is copied into the installed MCP bridge metadata so desktop and MCP
+discovery use the same app identity and config directory.
+
+MediaPipe and yt-dlp downloads are pinned and integrity checked. Windows uses
+a pinned, audited BtbN GPL-3.0-or-later FFmpeg/FFprobe pair. macOS packages
+build and audit a native GPL pair from a pinned, patched source recipe. Linux
+development uses explicit runtime overrides or PATH and remains package-gated
+until an audited native asset recipe is supplied. See `THIRD_PARTY_NOTICES.md`
+and the release compliance bundle for source/provenance information.
 
 ## QA
 
@@ -160,6 +180,8 @@ The unpacked v4 desktop app is written to `release/mac-*` on macOS. Use `npm run
 npm run verify           # smoke checks
 npm run verify:quality   # unified quality-score sync check
 npm run verify:engines   # engine/runtime checks
+npm run verify:platform  # path, protocol, manifest portability checks
+npm run verify:metadata  # dependency/version/package contract checks
 npm run verify:e2e       # headless Electron export (asserts OpenPose mp4 + keypoints in the bundle)
 npm run verify:all       # verify + build + verify:e2e
 npm run screenshots
@@ -175,11 +197,19 @@ The current local macOS build can run on this machine and can be shared with tru
 
 This project uses Apache-2.0 because it is permissive, standard, and includes a patent grant plus NOTICE preservation. Forks and derivative works must preserve copyright, license, and applicable attribution notices when redistributed.
 
+The application source remains Apache-2.0. Packaged FFmpeg/FFprobe are separate
+GPL-3.0-or-later components with their own source/compliance bundle. Stable or
+commercial distribution remains gated on upstream/trademark permission, code
+signing, an FFmpeg/H.264 licensing review, and the ordinary third-party
+compliance review.
+
 Standard open-source licenses cannot force every fork to display a prominent in-app credit badge or marketing credit. If you need that kind of mandatory public-facing credit, use a custom source-available license instead of a standard open-source license. For this open-source release, the repo includes:
 
 - `LICENSE`: Apache License 2.0.
 - `NOTICE`: Sam Wasserman / Wasserman Productions / Wasserman.ai attribution notice.
 - `CITATION.cff`: GitHub-compatible citation metadata.
+- `MODIFICATIONS.md`: summary of portability changes from the upstream baseline.
+- `THIRD_PARTY_NOTICES.md`: packaged executable/model provenance and licenses.
 
 ## Future Ideas
 

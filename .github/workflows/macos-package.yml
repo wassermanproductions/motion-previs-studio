@@ -1,0 +1,74 @@
+name: macOS package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  package:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.ref_name, '-windows.')
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-13, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: brew install pkg-config yasm nasm cmake meson ninja
+      - uses: actions/cache@v4
+        with:
+          path: |
+            public/models
+            public/mediapipe
+            runtime/bin
+            runtime/media
+            work/ffmpeg-source-cache
+          key: mps-macos-assets-${{ runner.arch }}-${{ hashFiles('ASSET_MANIFEST.json', 'scripts/ffmpeg/macos-portable-gpl.patch', 'package-lock.json') }}
+      - run: npm ci
+      - run: npm run package:mac
+      - run: npm run verify:package-layout
+      - run: npm run release:compliance
+      - run: npm run release:sources
+      - name: Generate checksums and SBOMs
+        run: |
+          shasum -a 256 release/*.dmg release/*.zip > release/SHA256SUMS
+          npm sbom --sbom-format cyclonedx > release/sbom.cdx.json
+          npm sbom --sbom-format spdx > release/sbom.spdx.json
+          cp ASSET_MANIFEST.json LICENSE NOTICE MODIFICATIONS.md THIRD_PARTY_NOTICES.md release/
+      - run: npm run release:sbom
+      - name: Attest release provenance
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            release/*.dmg
+            release/*.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: motion-previs-studio-macos-${{ runner.arch }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/SHA256SUMS
+            release/sbom.*.json
+            release/ASSET_MANIFEST.json
+            release/LICENSE
+            release/NOTICE
+            release/MODIFICATIONS.md
+            release/THIRD_PARTY_NOTICES.md
+            release/FFMPEG_LICENSE.txt
+            release/FFPROBE_LICENSE.txt
+            release/MEDIA_BINARY_PROVENANCE.json
+            release/corresponding-source/*
+          if-no-files-found: error

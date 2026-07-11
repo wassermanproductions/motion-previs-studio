@@ -10,10 +10,13 @@ contextBridge.exposeInMainWorld('motionPrevis', {
   encodeFramesBegin: (payload) => ipcRenderer.invoke('analysis:encode-frames:begin', payload),
   encodeFramesFrame: (payload) => ipcRenderer.invoke('analysis:encode-frames:frame', payload),
   encodeFramesEnd: (payload) => ipcRenderer.invoke('analysis:encode-frames:end', payload),
+  encodeFramesCancel: (payload) => ipcRenderer.invoke('analysis:encode-frames:cancel', payload),
+  cancelAnalysis: () => ipcRenderer.invoke('analysis:cancel'),
   openPath: (targetPath) => ipcRenderer.invoke('shell:open-path', targetPath),
   revealPath: (targetPath) => ipcRenderer.invoke('shell:reveal-path', targetPath),
   openExternal: (url) => ipcRenderer.invoke('shell:open-external', url),
   getVersions: () => ipcRenderer.invoke('app:versions'),
+  getAppInfo: () => ipcRenderer.invoke('app:info'),
   // Project session save / restore.
   saveSession: (session) => ipcRenderer.invoke('project:save-session', session),
   loadSession: () => ipcRenderer.invoke('project:load-session'),

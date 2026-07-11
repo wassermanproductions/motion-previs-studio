@@ -1,0 +1,74 @@
+name: Windows package
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*-windows.*'
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  package:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: |
+            public/models
+            public/mediapipe
+            runtime/bin
+          key: mps-assets-${{ runner.os }}-${{ hashFiles('ASSET_MANIFEST.json', 'package-lock.json') }}
+      - run: npm ci
+      - run: npm run verify:platform
+      - run: npm run verify:metadata
+      - run: npm run verify:encoder
+      - run: npm run verify:shutdown
+      - run: npm run verify:process-tree
+      - run: npm run package:win
+      - run: npm run verify:package-layout
+      - name: Verify unpacked and installed application
+        shell: pwsh
+        run: ./tests/windows-package.ps1
+      - run: npm run release:compliance
+      - run: npm run release:sources
+      - name: Generate checksums and SBOMs
+        shell: pwsh
+        run: |
+          Get-ChildItem release -Filter *.exe | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } | Set-Content release/SHA256SUMS
+          npm sbom --sbom-format cyclonedx | Out-File -Encoding utf8 release/sbom.cdx.json
+          npm sbom --sbom-format spdx | Out-File -Encoding utf8 release/sbom.spdx.json
+          Copy-Item ASSET_MANIFEST.json, LICENSE, NOTICE, MODIFICATIONS.md, THIRD_PARTY_NOTICES.md -Destination release
+      - run: npm run release:sbom
+      - name: Attest release provenance
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release/*.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: motion-previs-studio-windows-x64
+          path: |
+            release/*.exe
+            release/SHA256SUMS
+            release/sbom.*.json
+            release/ASSET_MANIFEST.json
+            release/LICENSE
+            release/NOTICE
+            release/MODIFICATIONS.md
+            release/THIRD_PARTY_NOTICES.md
+            release/FFMPEG_LICENSE.txt
+            release/FFMPEG_README.txt
+            release/FFPROBE_LICENSE.txt
+            release/FFPROBE_README.txt
+            release/MEDIA_BINARY_PROVENANCE.json
+            release/corresponding-source/*
+          if-no-files-found: error

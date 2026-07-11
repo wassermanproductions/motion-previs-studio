@@ -71,5 +71,5 @@ export interface MpsControlSurface {
   runAnalysis(): { started: true };
   exportPack(): Promise<{ bundlePath: string; zipPath: string }>;
   listBundle(): Promise<{ bundlePath: string; files: string[] }>;
-  sendToBlockout(which: SendToBlockoutWhich): Promise<{ ok: true; which: SendToBlockoutWhich; videoPath: string }>;
+  sendToBlockout(which: SendToBlockoutWhich): Promise<{ ok: true; which: SendToBlockoutWhich; videoPath: string; handoffVersion: number }>;
 }

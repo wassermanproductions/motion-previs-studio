@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, shell, protocol } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, protocol, Menu } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -8,13 +8,31 @@ const security = require('./security.cjs');
 const validate = require('./validate.cjs');
 const frameEncode = require('./frameEncode.cjs');
 const control = require('./control.cjs');
+const config = require('./config.cjs');
+const portable = require('./portable.cjs');
+const blockoutProtocol = require('./blockoutProtocol.cjs');
+const shutdown = require('./shutdown.cjs');
+const processTree = require('./processTree.cjs');
 const quality = require('../shared/quality.cjs');
 const pkg = require('../package.json');
 
-const APP_NAME = pkg.productName || 'Motion Previs Studio v4';
+const DISTRIBUTION = pkg.distribution || {};
+const APP_NAME = DISTRIBUTION.displayName || pkg.build?.productName || pkg.productName || 'Motion Previs Studio v4';
 const APP_VERSION = pkg.version;
+const APP_ID = DISTRIBUTION.appId || pkg.build?.appId || 'studio.motionprevis.app.v4';
 
 let mainWindow;
+const activeProcesses = new Set();
+let isShuttingDown = false;
+
+if (process.env.MOTION_PREVIS_USER_DATA_DIR) {
+  app.setPath('userData', path.resolve(process.env.MOTION_PREVIS_USER_DATA_DIR));
+} else if (process.platform === 'win32' && DISTRIBUTION.userDataFolder) {
+  app.setPath('userData', path.join(app.getPath('appData'), DISTRIBUTION.userDataFolder));
+}
+if (!process.env.MOTION_PREVIS_CONFIG_DIR && process.platform === 'win32' && DISTRIBUTION.configFolder) {
+  process.env.MOTION_PREVIS_CONFIG_DIR = path.join(app.getPath('appData'), DISTRIBUTION.configFolder);
+}
 
 // Register the privileged mps:// scheme before app is ready.
 security.registerPrivilegedScheme(protocol);
@@ -27,29 +45,52 @@ function rendererRoot() {
   return app.isPackaged ? path.join(process.resourcesPath, 'app.asar') : appRoot();
 }
 
-function resolveBin(packagePath, fallback) {
-  const candidate = packagePath || fallback;
-  if (!app.isPackaged) return candidate;
-  if (!candidate) return fallback;
-  const unpacked = candidate.replace('app.asar', 'app.asar.unpacked');
-  return fs.existsSync(unpacked) ? unpacked : candidate;
-}
-
 function ffmpegPath() {
-  return resolveBin(require('ffmpeg-static'), 'ffmpeg');
+  if (process.env.MOTION_PREVIS_FFMPEG) return path.resolve(process.env.MOTION_PREVIS_FFMPEG);
+  const bundled = mediaToolPath(process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+  if (bundled) return bundled;
+  return resolveCommandOnPath('ffmpeg') || 'ffmpeg';
 }
 
 function ffprobePath() {
-  const ffprobe = require('ffprobe-static');
-  return resolveBin(ffprobe.path, 'ffprobe');
+  if (process.env.MOTION_PREVIS_FFPROBE) return path.resolve(process.env.MOTION_PREVIS_FFPROBE);
+  const bundled = mediaToolPath(process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe');
+  if (bundled) return bundled;
+  return resolveCommandOnPath('ffprobe') || 'ffprobe';
+}
+
+function mediaToolPath(name) {
+  const candidate = app.isPackaged
+    ? path.join(process.resourcesPath, 'media', name)
+    : path.join(appRoot(), 'runtime', 'media', `${process.platform}-${process.arch}`, name);
+  return fs.existsSync(candidate) ? candidate : null;
+}
+
+function resolveCommandOnPath(command) {
+  const extensions = process.platform === 'win32'
+    ? (process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';')
+    : [''];
+  for (const folder of String(process.env.PATH || '').split(path.delimiter)) {
+    if (!folder) continue;
+    for (const extension of extensions) {
+      const candidate = path.join(folder, process.platform === 'win32' ? `${command}${extension}` : command);
+      try {
+        fs.accessSync(candidate, fs.constants.X_OK);
+        return candidate;
+      } catch {
+        // Continue through PATH.
+      }
+    }
+  }
+  return null;
 }
 
 function ytDlpPath() {
   const exe = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
   const resourceCandidate = path.join(process.resourcesPath || '', 'bin', exe);
   if (app.isPackaged && fs.existsSync(resourceCandidate)) return resourceCandidate;
-  const publicCandidate = path.join(appRoot(), 'public', 'bin', exe);
-  if (fs.existsSync(publicCandidate)) return publicCandidate;
+  const developmentCandidate = path.join(appRoot(), 'runtime', 'bin', exe);
+  if (fs.existsSync(developmentCandidate)) return developmentCandidate;
   return exe;
 }
 
@@ -84,12 +125,20 @@ async function openExternalUrl(url) {
 }
 
 function run(bin, args, options = {}) {
+  if (isShuttingDown) return Promise.reject(new Error('Motion Previs Studio is shutting down.'));
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, {
       cwd: options.cwd || appRoot(),
       env: { ...process.env, ...options.env },
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
     });
+    const entry = {
+      child,
+      cancelled: false,
+      closePromise: new Promise((resolve) => child.once('close', resolve))
+    };
+    activeProcesses.add(entry);
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => {
@@ -98,8 +147,23 @@ function run(bin, args, options = {}) {
     child.stderr.on('data', (chunk) => {
       stderr += chunk.toString();
     });
-    child.on('error', reject);
+    const abort = () => {
+      entry.cancelled = true;
+      void processTree.terminateChildTree(child, entry.closePromise);
+    };
+    options.signal?.addEventListener('abort', abort, { once: true });
+    child.on('error', (error) => {
+      activeProcesses.delete(entry);
+      options.signal?.removeEventListener('abort', abort);
+      reject(error);
+    });
     child.on('close', (code) => {
+      activeProcesses.delete(entry);
+      options.signal?.removeEventListener('abort', abort);
+      if (entry.cancelled || options.signal?.aborted) {
+        reject(abortError());
+        return;
+      }
       if (code === 0) {
         resolve({ stdout, stderr });
       } else {
@@ -107,7 +171,25 @@ function run(bin, args, options = {}) {
         reject(new Error(message));
       }
     });
+    if (options.signal?.aborted) abort();
   });
+}
+
+function abortError() {
+  const error = new Error('Analysis cancelled.');
+  error.name = 'AbortError';
+  return error;
+}
+
+async function cancelActiveProcesses() {
+  const entries = [...activeProcesses];
+  for (const entry of entries) entry.cancelled = true;
+  const results = await Promise.allSettled(
+    entries.map((entry) => processTree.terminateChildTree(entry.child, entry.closePromise))
+  );
+  const timedOut = results.filter((result) => result.status === 'fulfilled' && !result.value).length;
+  if (timedOut) console.warn(`[motion-previs] ${timedOut} child process tree(s) did not close before the cancellation deadline.`);
+  return { cancelled: entries.length };
 }
 
 async function probe(filePath) {
@@ -157,8 +239,9 @@ async function openMediaFile() {
   if (result.canceled || !result.filePaths.length) return null;
   // User explicitly chose this file: record it so mps:// can serve it and
   // shell:open/reveal can target it.
-  security.allowImportSource(result.filePaths[0]);
-  return probe(result.filePaths[0]);
+  const canonical = security.allowImportSource(result.filePaths[0]);
+  if (!canonical) throw new Error('The selected media path could not be resolved.');
+  return probe(canonical);
 }
 
 // Import a specific media file by absolute path (agent-control entry point;
@@ -167,15 +250,16 @@ async function openMediaFile() {
 // user-chosen file would be.
 async function importMediaPath(sourcePath) {
   const clean = validate.requireString(sourcePath, 'path');
-  if (!fs.existsSync(clean)) {
+  const canonical = security.normalizeAbsolute(clean, { mustExist: true });
+  if (!canonical) {
     throw new Error(`No file at "${clean}".`);
   }
-  const stat = fs.statSync(clean);
+  const stat = fs.statSync(canonical);
   if (!stat.isFile()) {
     throw new Error(`Path "${clean}" is not a file.`);
   }
-  security.allowImportSource(clean);
-  return probe(clean);
+  security.allowImportSource(canonical);
+  return probe(canonical);
 }
 
 async function importUrl(url) {
@@ -189,6 +273,8 @@ async function importUrl(url) {
   const outputTemplate = path.join(dir, '%(title).120B-%(id)s.%(ext)s');
 
   await run(ytDlpPath(), [
+    '--ffmpeg-location',
+    ffmpegPath(),
     '--output',
     outputTemplate,
     '--format',
@@ -242,8 +328,7 @@ async function createControlVideo(inputPath, outPath, filter, fps) {
 }
 
 async function prepareAnalysis(payload) {
-  const sourcePath = payload.sourcePath;
-  if (!sourcePath || !fs.existsSync(sourcePath)) throw new Error('Source media is missing.');
+  const sourcePath = requireAllowedInputFile(payload.sourcePath, 'source media');
 
   const meta = await probe(sourcePath);
   if (!meta.width || !meta.height) {
@@ -393,7 +478,29 @@ async function prepareAnalysis(payload) {
     status: 'prepared'
   };
 
-  fs.writeFileSync(path.join(outDir, 'analysis_manifest.json'), JSON.stringify(manifest, null, 2));
+  const persistedManifest = {
+    schemaVersion: 1,
+    analysisId,
+    createdAt: manifest.createdAt,
+    sourceName: meta.name,
+    range: manifest.range,
+    sampleFps: fps,
+    outputDir: '.',
+    frameSize: manifest.frameSize,
+    status: manifest.status,
+    files: {
+      reference: 'reference.mp4',
+      depth: 'depth.mp4',
+      edges: 'edges.mp4',
+      lineart: 'lineart.mp4',
+      motionMask: 'motion_mask.mp4',
+      normals: 'normals_proxy.mp4',
+      animatic: 'animatic.mp4',
+      contactSheet: 'contact_sheet.jpg',
+      preview: 'preview.jpg'
+    }
+  };
+  fs.writeFileSync(path.join(outDir, 'analysis_manifest.json'), JSON.stringify(persistedManifest, null, 2));
   return manifest;
 }
 
@@ -432,12 +539,25 @@ async function runPool(concurrency, jobs) {
 }
 
 async function savePoseArtifacts(payload) {
-  const analysisDir = payload.outputDir;
-  if (!analysisDir || !fs.existsSync(analysisDir)) throw new Error('Analysis output folder is missing.');
-  // The renderer must only ever write into the app-managed workspace.
-  if (!security.isAllowedPath(analysisDir)) {
+  const analysisDir = security.canonicalAllowedDirectory(payload.outputDir);
+  if (!analysisDir) {
     throw new Error('Analysis output folder is outside the app workspace.');
   }
+  // Canonicalize every renderer-supplied input before any output is written.
+  // This prevents a compromised renderer from making ffmpeg read an arbitrary
+  // local file while still allowing the app-managed analysis assets.
+  payload = {
+    ...payload,
+    outputDir: analysisDir,
+    referencePath: requireAllowedInputFile(payload.referencePath, 'reference video'),
+    depthPath: requireAllowedInputFile(payload.depthPath, 'depth video'),
+    edgesPath: optionalAllowedInputFile(payload.edgesPath, 'edge video'),
+    lineartPath: optionalAllowedInputFile(payload.lineartPath, 'line-art video'),
+    motionMaskPath: optionalAllowedInputFile(payload.motionMaskPath, 'motion-mask video'),
+    normalsPath: optionalAllowedInputFile(payload.normalsPath, 'normals video'),
+    contactSheetPath: optionalAllowedInputFile(payload.contactSheetPath, 'contact sheet'),
+    animaticPath: optionalAllowedInputFile(payload.animaticPath, 'animatic video')
+  };
   // resolution is validated upstream; retained for parity with the prepare step.
   const resolution = validate.validateResolution(payload.resolution);
   void resolution;
@@ -563,6 +683,7 @@ async function savePoseArtifacts(payload) {
   };
 
   const manifest = {
+    schemaVersion: 1,
     app: APP_NAME,
     version: APP_VERSION,
     createdAt: new Date().toISOString(),
@@ -574,7 +695,7 @@ async function savePoseArtifacts(payload) {
     analysisSettings: payload.poseData?.summary?.settings || payload.planningData?.analysisSettings || null,
     poseDiagnostics: payload.poseData?.summary?.diagnostics || [],
     planning: payload.planningData || null,
-    files
+    files: portable.portableBundleFiles(analysisDir, files)
   };
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
 
@@ -591,6 +712,20 @@ async function savePoseArtifacts(payload) {
 function findSibling(folder, name) {
   const filePath = path.join(folder, name);
   return fs.existsSync(filePath) ? filePath : null;
+}
+
+function requireAllowedInputFile(filePath, label) {
+  const canonical = security.canonicalAllowedFile(filePath);
+  if (!canonical) {
+    throw new Error(`${label} is missing or outside the app workspace and imported sources.`);
+  }
+  return canonical;
+}
+
+function optionalAllowedInputFile(filePath, label) {
+  return filePath === undefined || filePath === null
+    ? undefined
+    : requireAllowedInputFile(filePath, label);
 }
 
 /**
@@ -630,7 +765,7 @@ function zipDirectory(sourceDir, zipPath) {
 
 function comfyManifest(payload) {
   return {
-    name: 'Motion Previs Studio v3 Control Reference Bundle',
+    name: `Motion Previs Studio v${APP_VERSION} Control Reference Bundle`,
     source: payload.sourceName,
     range: payload.range,
     recommendedInputs: [
@@ -699,7 +834,7 @@ function promptPack(payload) {
   const style = planning.visualStyle || 'Professional cinematic AI-film shot with controlled camera blocking and coherent previsualization.';
 
   return [
-    '# Motion Previs Studio v3 Prompt Pack',
+    `# Motion Previs Studio v${APP_VERSION} Prompt Pack`,
     '',
     `Project: ${planning.projectTitle || 'Motion Previs Project'}`,
     `Scene: ${scene}`,
@@ -890,7 +1025,7 @@ def main():
             for keyframe in fcurve.keyframe_points:
                 keyframe.interpolation = "BEZIER"
 
-    print(f"Imported {len(frames)} camera move frames from Motion Previs Studio v3.")
+    print(f"Imported {len(frames)} camera move frames from Motion Previs Studio v${APP_VERSION}.")
 
 if __name__ == "__main__":
     main()
@@ -938,7 +1073,7 @@ def main():
     make_movie_plane("Depth Plate", "depth.mp4", (-3.5, 2.0, 1.0), (1.25, 1.25, 1.0))
     make_movie_plane("Edges Plate", "edges.mp4", (3.5, 2.0, 1.0), (1.25, 1.25, 1.0))
     bpy.ops.wm.save_as_mainfile(filepath=os.path.join(FOLDER, "motion_previs_scene.blend"))
-    print("Built Motion Previs Studio v3 Blender scene with camera, pose, and reference plates.")
+    print("Built Motion Previs Studio v${APP_VERSION} Blender scene with camera, pose, and reference plates.")
 
 if __name__ == "__main__":
     main()
@@ -1015,7 +1150,7 @@ def main():
                 for keyframe in fcurve.keyframe_points:
                     keyframe.interpolation = "LINEAR"
 
-    print(f"Imported {len(frames)} pose frames from Motion Previs Studio v3.")
+    print(f"Imported {len(frames)} pose frames from Motion Previs Studio v${APP_VERSION}.")
 
 if __name__ == "__main__":
     main()
@@ -1086,20 +1221,57 @@ function loadSession() {
 // the local control server's { port, token }. We read it (main-process only,
 // never the renderer) and POST a set_reference control action.
 
-function blockoutControlPath() {
-  return path.join(os.homedir(), '.config', 'blockout', 'control.json');
+function readBlockoutControls() {
+  const descriptors = [];
+  for (const file of config.blockoutControlFiles({ distribution: DISTRIBUTION })) {
+    if (!fs.existsSync(file)) continue;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+      if (!parsed || typeof parsed !== 'object') continue;
+      const port = Number(parsed.port);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) continue;
+      if (parsed.protocolVersion !== undefined && parsed.protocolVersion !== 1) continue;
+      if (parsed.app && !String(parsed.app).toLowerCase().includes('blockout')) continue;
+      descriptors.push({ ...parsed, port, descriptorFile: file });
+    } catch {
+      // Try the next platform/legacy descriptor location.
+    }
+  }
+  return descriptors;
 }
 
-function readBlockoutControl() {
-  const file = blockoutControlPath();
-  if (!fs.existsSync(file)) return null;
+async function probeBlockout(controlDescriptor) {
+  if (!controlDescriptor) return false;
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (!parsed || typeof parsed !== 'object') return null;
-    return parsed;
+    const host = localControlHost(controlDescriptor.host);
+    const response = await fetch(`http://${host}:${controlDescriptor.port}/health`, {
+      signal: AbortSignal.timeout(1500)
+    });
+    if (!response.ok) return false;
+    const health = await response.json();
+    return Boolean(health?.ok && (!health.app || String(health.app).toLowerCase().includes('blockout')));
   } catch {
-    return null;
+    return false;
   }
+}
+
+async function findLiveBlockoutControl() {
+  // A crashed or upgraded installation may leave a syntactically valid stale
+  // descriptor in the first candidate location. Probe every compatible
+  // descriptor in priority order instead of treating that first stale file as
+  // authoritative and hiding a live upstream/community installation.
+  for (const descriptor of readBlockoutControls()) {
+    if (await probeBlockout(descriptor)) return descriptor;
+  }
+  return null;
+}
+
+function localControlHost(host) {
+  const value = String(host || '127.0.0.1').toLowerCase();
+  if (!['127.0.0.1', 'localhost', '::1'].includes(value)) {
+    throw new Error('Blockout control descriptor must point to localhost.');
+  }
+  return value === '::1' ? '[::1]' : value;
 }
 
 async function sendToBlockout(payload) {
@@ -1113,24 +1285,38 @@ async function sendToBlockout(payload) {
   const mode = payload.mode === 'pip' ? 'pip' : 'ghost';
   const opacity = Number.isFinite(Number(payload.opacity)) ? clamp(Number(payload.opacity), 0, 1) : 0.5;
 
-  const control = readBlockoutControl();
-  if (!control || !control.port) {
+  const control = await findLiveBlockoutControl();
+  if (!control) {
     const error = new Error('Blockout is not running. Open a Blockout project first, then try again.');
     error.code = 'BLOCKOUT_UNAVAILABLE';
     throw error;
   }
 
-  const host = control.host || '127.0.0.1';
+  const host = localControlHost(control.host);
   const base = `http://${host}:${control.port}`;
   // Blockout's control server exposes POST /rpc with a bearer token and a
   // { action, params } body; set_reference takes { path, mode, opacity }.
-  const body = JSON.stringify({
-    action: 'set_reference',
-    params: { path: videoPath, mode, opacity }
-  });
   const headers = { 'Content-Type': 'application/json' };
   if (control.token) headers.Authorization = `Bearer ${control.token}`;
 
+  let result = await postBlockoutReference(base, headers, blockoutProtocol.buildSetReferenceParams(videoPath, mode, opacity));
+  let handoffVersion = blockoutProtocol.HANDOFF_VERSION;
+  const rejection = result.json?.error || (result.json?.ok === false ? result.text : '');
+  if (blockoutProtocol.shouldRetryLegacyHandoff(result.response.status, rejection)) {
+    result = await postBlockoutReference(base, headers, blockoutProtocol.buildSetReferenceParams(videoPath, mode, opacity, false));
+    handoffVersion = 0;
+  }
+  const { response, text, json } = result;
+  if (!response.ok) throw new Error(`Blockout rejected the reference (${response.status}): ${json?.error || text || 'unknown error'}`);
+  // The control server wraps the handler result as { ok, data } | { ok, error }.
+  if (json && json.ok === false) {
+    throw new Error(`Blockout could not attach the reference: ${json.error || 'unknown error'}`);
+  }
+  return { ok: true, mode, opacity, handoffVersion, result: json && json.data !== undefined ? json.data : json };
+}
+
+async function postBlockoutReference(base, headers, params) {
+  const body = JSON.stringify({ action: 'set_reference', params });
   let response;
   try {
     response = await fetch(`${base}/rpc`, { method: 'POST', headers, body });
@@ -1141,24 +1327,18 @@ async function sendToBlockout(payload) {
   }
   const text = await response.text();
   let json = null;
-  try {
-    json = text ? JSON.parse(text) : null;
-  } catch {
-    /* non-JSON response */
-  }
-  if (!response.ok) {
-    throw new Error(`Blockout rejected the reference (${response.status}): ${json?.error || text || 'unknown error'}`);
-  }
-  // The control server wraps the handler result as { ok, data } | { ok, error }.
-  if (json && json.ok === false) {
-    throw new Error(`Blockout could not attach the reference: ${json.error || 'unknown error'}`);
-  }
-  return { ok: true, mode, opacity, result: json && json.data !== undefined ? json.data : json };
+  try { json = text ? JSON.parse(text) : null; } catch { /* non-JSON response */ }
+  return { response, text, json };
 }
 
-function isBlockoutRunning() {
-  const control = readBlockoutControl();
-  return { available: Boolean(control && control.port) };
+async function isBlockoutRunning() {
+  const control = await findLiveBlockoutControl();
+  const available = Boolean(control);
+  return {
+    available,
+    protocolVersion: available ? Number(control.protocolVersion || 0) : null,
+    appVersion: available ? control.appVersion || control.version || null : null
+  };
 }
 
 function createWindow() {
@@ -1169,6 +1349,7 @@ function createWindow() {
     minHeight: 760,
     title: APP_NAME,
     backgroundColor: '#101214',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -1178,6 +1359,8 @@ function createWindow() {
       webSecurity: true
     }
   });
+
+  if (process.platform === 'win32') mainWindow.setMenuBarVisibility(false);
 
   const devUrl = process.env.ELECTRON_RENDERER_URL;
   if (devUrl) {
@@ -1197,6 +1380,10 @@ function requireAllowedFsPath(targetPath, action) {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === 'win32') {
+    app.setAppUserModelId(APP_ID);
+    Menu.setApplicationMenu(null);
+  }
   // Serve allowlisted files over mps:// (must be after 'ready').
   security.installProtocolHandler(protocol);
   // Ensure the workspace root is registered even before the first import.
@@ -1206,7 +1393,12 @@ app.whenReady().then(() => {
     applicationName: APP_NAME,
     applicationVersion: app.getVersion(),
     copyright: 'Developed and created by Sam Wasserman (Wasserman Productions / Wasserman.ai).',
-    credits: 'Developed and created by Sam Wasserman. WassermanProductions.com / Wasserman.ai.'
+    credits: [
+      'Developed and created by Sam Wasserman. WassermanProductions.com / Wasserman.ai.',
+      DISTRIBUTION.isCommunityBuild && DISTRIBUTION.maintainer
+        ? `Windows port maintained by ${DISTRIBUTION.maintainer}. Unofficial community build.`
+        : ''
+    ].filter(Boolean).join(' ')
   });
 
   ipcMain.handle('dialog:open-media', () => openMediaFile());
@@ -1214,6 +1406,7 @@ app.whenReady().then(() => {
   ipcMain.handle('media:import-url', (_event, url) => importUrl(validate.requireString(url, 'url')));
   ipcMain.handle('analysis:prepare', (_event, payload) => prepareAnalysis(validate.validatePreparePayload(payload)));
   ipcMain.handle('analysis:save-pose-artifacts', (_event, payload) => savePoseArtifacts(validate.validateSavePosePayload(payload)));
+  ipcMain.handle('analysis:cancel', () => cancelActiveProcesses());
   // Deterministic PNG-stream -> H.264 encoder (replaces MediaRecorder).
   frameEncode.register(ipcMain, ffmpegPath);
   ipcMain.handle('shell:open-path', (_event, targetPath) => shell.openPath(requireAllowedFsPath(targetPath, 'open-path')));
@@ -1232,13 +1425,27 @@ app.whenReady().then(() => {
     app: APP_VERSION,
     ffmpeg: ffmpegPath(),
     ffprobe: ffprobePath(),
-    workspace: workspaceRoot()
+    workspace: workspaceRoot(),
+    platform: process.platform,
+    displayName: APP_NAME,
+    appId: APP_ID,
+    isCommunityBuild: String(Boolean(DISTRIBUTION.isCommunityBuild)),
+    maintainer: DISTRIBUTION.maintainer || '',
+    configFile: config.motionDiscoveryFile()
+  }));
+  ipcMain.handle('app:info', () => ({
+    platform: process.platform,
+    appId: APP_ID,
+    displayName: APP_NAME,
+    version: APP_VERSION,
+    isCommunityBuild: Boolean(DISTRIBUTION.isCommunityBuild),
+    maintainer: DISTRIBUTION.maintainer || null
   }));
 
   createWindow();
 
   // Agent-control HTTP server (MCP bridge). Localhost-only, token-gated; writes
-  // a discovery file at ~/.config/motion-previs/control.json. Failure to start
+  // a discovery file in the platform config directory. Failure to start
   // must never take the app down — the UI works without it.
   control
     .startControlServer(() => mainWindow, { ipcMain, app, appName: 'motion-previs-studio', version: APP_VERSION })
@@ -1253,7 +1460,12 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// Never leave an orphaned ffmpeg encode pipe behind.
-app.on('before-quit', () => {
-  frameEncode.disposeAllSessions();
+// Electron does not await async event listeners. Gate the first quit request,
+// await both encoder pipes and every tracked child process, then resume quit.
+shutdown.installShutdownGate(app, async () => {
+  isShuttingDown = true;
+  await Promise.allSettled([
+    frameEncode.disposeAllSessions(),
+    cancelActiveProcesses()
+  ]);
 });

@@ -11,6 +11,15 @@ export type MediaInfo = {
   sizeBytes: number;
 };
 
+export type AppInfo = {
+  platform: 'darwin' | 'win32' | 'linux';
+  appId: string;
+  displayName: string;
+  version: string;
+  isCommunityBuild: boolean;
+  maintainer: string | null;
+};
+
 export type AnalysisManifest = {
   analysisId: string;
   createdAt: string;
