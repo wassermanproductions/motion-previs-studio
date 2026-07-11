@@ -35,6 +35,8 @@ jobs:
       - run: npm run verify:process-tree
       - run: npm run package:win
       - run: npm run verify:package-layout
+      - name: Verify packaged MediaPipe asset origin
+        run: node tests/packaged-assets.cjs
       - name: Verify unpacked and installed application
         shell: pwsh
         run: ./tests/windows-package.ps1

@@ -117,7 +117,8 @@ async function loadDepthEstimator(progress?: ProgressFn): Promise<DepthEstimator
           ...options,
           device: 'webgpu'
         })) as unknown as DepthEstimator;
-      } catch {
+      } catch (error) {
+        console.warn('[ai-depth] WebGPU unavailable; using pinned CPU fallback.', error);
         return (await pipeline('depth-estimation', DEPTH_ANYTHING_REPOSITORY, options)) as unknown as DepthEstimator;
       }
     })();

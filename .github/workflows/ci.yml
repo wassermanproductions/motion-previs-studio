@@ -67,4 +67,6 @@ jobs:
       - run: npm run verify:shutdown
       - run: npm run verify:process-tree
       - run: npm run build
+      - name: Verify secure packaged-renderer origin
+        run: node tests/secure-origin.cjs
       - run: npm run verify:e2e
