@@ -30,6 +30,23 @@ try {
   assert.equal(security.urlToPath(mediaUrl), canonicalPath(clip));
   assert.match(mediaUrl, /^mps:\/\/media\/file\?path=/);
 
+  const appAssets = path.join(temp, 'application assets');
+  const appIndex = path.join(appAssets, 'index.html');
+  const appWasm = path.join(appAssets, 'mediapipe', 'vision.wasm');
+  fs.mkdirSync(path.dirname(appWasm), { recursive: true });
+  fs.writeFileSync(appIndex, '<!doctype html>');
+  fs.writeFileSync(appWasm, 'wasm');
+  assert.equal(security.appAssetPathFromUrl('mps://app/index.html', appAssets), appIndex);
+  assert.equal(security.appAssetPathFromUrl('mps://app/mediapipe/vision.wasm', appAssets), appWasm);
+  assert.throws(
+    () => security.appAssetPathFromUrl('mps://app/%2e%2e%2fsecret.txt', appAssets),
+    /escaped its root/
+  );
+  assert.throws(
+    () => security.appAssetPathFromUrl('mps://app/mediapipe%5csecret.wasm', appAssets, 'win32'),
+    /asset path/
+  );
+
   if (process.platform !== 'win32') {
     const escape = path.join(allowed, 'junction-escape');
     fs.symlinkSync(outside, escape, 'dir');

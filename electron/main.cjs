@@ -1366,7 +1366,10 @@ function createWindow() {
   if (devUrl) {
     mainWindow.loadURL(devUrl);
   } else {
-    mainWindow.loadFile(path.join(rendererRoot(), 'dist', 'index.html'));
+    // A privileged standard scheme gives packaged WASM/model fetches an HTTP-
+    // like origin. Chromium refuses fetch(file://...) in production, which
+    // otherwise prevents the bundled MediaPipe runtime from starting.
+    mainWindow.loadURL('mps://app/index.html');
   }
 }
 
@@ -1385,7 +1388,7 @@ app.whenReady().then(() => {
     Menu.setApplicationMenu(null);
   }
   // Serve allowlisted files over mps:// (must be after 'ready').
-  security.installProtocolHandler(protocol);
+  security.installProtocolHandler(protocol, { appAssetRoot: path.join(rendererRoot(), 'dist') });
   // Ensure the workspace root is registered even before the first import.
   workspaceRoot();
 

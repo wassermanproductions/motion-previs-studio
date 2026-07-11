@@ -149,6 +149,13 @@ function hasPath(set, candidate) {
 }
 
 const CONTENT_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.wasm': 'application/wasm',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
   '.mp4': 'video/mp4',
   '.m4v': 'video/mp4',
   '.mov': 'video/quicktime',
@@ -195,18 +202,46 @@ function registerPrivilegedScheme(protocol) {
 
 /**
  * Install the protocol handler. MUST be called after app 'ready'.
- * Serves only allowlisted, existing regular files; everything else 403/404s.
+ * Serves only fixed-root application assets or allowlisted existing files;
+ * everything else is rejected.
  */
-function installProtocolHandler(protocol) {
+function appAssetPathFromUrl(requestUrl, appAssetRoot, platform = process.platform) {
+  const p = platform === 'win32' ? path.win32 : path;
+  const parsed = new URL(requestUrl);
+  if (parsed.protocol !== `${SCHEME}:` || parsed.hostname !== 'app') {
+    throw new Error('Invalid Motion Previs application URL.');
+  }
+  const decodedPath = decodeURIComponent(parsed.pathname);
+  if (decodedPath.includes('\0') || decodedPath.includes('\\')) {
+    throw new Error('Invalid Motion Previs application asset path.');
+  }
+  const root = p.resolve(appAssetRoot);
+  const relative = decodedPath.replace(/^\/+/, '');
+  const candidate = p.resolve(root, relative);
+  if (candidate === root || !isPathWithinRoot(candidate, root, platform)) {
+    throw new Error('Motion Previs application asset path escaped its root.');
+  }
+  return candidate;
+}
+
+function installProtocolHandler(protocol, options = {}) {
+  const appAssetRoot = options.appAssetRoot ? path.resolve(options.appAssetRoot) : null;
   protocol.handle(SCHEME, async (request) => {
     let filePath;
+    let isApplicationAsset = false;
     try {
-      filePath = urlToPath(request.url);
+      const parsed = new URL(request.url);
+      if (parsed.hostname === 'app' && appAssetRoot) {
+        filePath = appAssetPathFromUrl(request.url, appAssetRoot);
+        isApplicationAsset = true;
+      } else {
+        filePath = urlToPath(request.url);
+      }
     } catch {
       return new Response('Bad request', { status: 400 });
     }
 
-    if (!isAllowedPath(filePath)) {
+    if (!isApplicationAsset && !isAllowedPath(filePath)) {
       return new Response('Forbidden', { status: 403 });
     }
 
@@ -292,6 +327,7 @@ module.exports = {
   canonicalAllowedDirectory,
   toAppUrl,
   urlToPath,
+  appAssetPathFromUrl,
   registerPrivilegedScheme,
   installProtocolHandler
 };
