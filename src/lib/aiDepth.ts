@@ -1,6 +1,6 @@
 import type { ProgressFn } from '../types';
 import { encodeFrames } from './frameEncoder';
-import { createDevicePipelineWithFallback, createRetryableAsync } from './depthBackend.mjs';
+import { createDevicePipelineWithFallback, createRetryableAsync, probeWebGpuAdapter } from './depthBackend.mjs';
 
 type DepthImage = {
   resize: (width: number, height: number) => Promise<{ toCanvas: () => HTMLCanvasElement }>;
@@ -119,8 +119,12 @@ const loadDepthEstimator = createRetryableAsync(async (progress?: ProgressFn): P
     task: 'depth-estimation',
     repository: DEPTH_ANYTHING_REPOSITORY,
     options,
+    probeWebGpu: () => probeWebGpuAdapter(
+      (navigator as Navigator & { gpu?: { requestAdapter?: () => Promise<unknown> } }).gpu
+    ),
     onFallback: (error) => console.warn('[ai-depth] WebGPU unavailable; using pinned CPU/WASM fallback.', error),
-    onCpuReady: () => console.info('[ai-depth] pinned CPU/WASM fallback ready.')
+    onCpuReady: () => console.info('[ai-depth] pinned CPU/WASM fallback ready.'),
+    onWebGpuFailure: (error) => console.error('[ai-depth] WebGPU initialization failed after adapter preflight.', error)
   });
 });
 
