@@ -40,14 +40,32 @@ jobs:
         run: ./tests/windows-package.ps1
       - run: npm run release:compliance
       - run: npm run release:sources
-      - name: Generate checksums and SBOMs
+      - name: Generate SBOMs and stage compliance files
         shell: pwsh
         run: |
-          Get-ChildItem release -Filter *.exe | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } | Set-Content release/SHA256SUMS
           npm sbom --sbom-format cyclonedx | Out-File -Encoding utf8 release/sbom.cdx.json
           npm sbom --sbom-format spdx | Out-File -Encoding utf8 release/sbom.spdx.json
           Copy-Item ASSET_MANIFEST.json, LICENSE, NOTICE, MODIFICATIONS.md, THIRD_PARTY_NOTICES.md -Destination release
       - run: npm run release:sbom
+      - name: Write complete SHA256SUMS
+        shell: pwsh
+        run: |
+          $named = @(
+            'sbom.cdx.json', 'sbom.spdx.json', 'ASSET_MANIFEST.json', 'LICENSE',
+            'NOTICE', 'MODIFICATIONS.md', 'THIRD_PARTY_NOTICES.md',
+            'FFMPEG_LICENSE.txt', 'FFMPEG_README.txt', 'FFPROBE_LICENSE.txt',
+            'FFPROBE_README.txt', 'MEDIA_BINARY_PROVENANCE.json'
+          )
+          $distributed = @(
+            Get-ChildItem release -Filter '*.exe' -File
+            $named | ForEach-Object { Get-Item (Join-Path release $_) -ErrorAction SilentlyContinue }
+            Get-ChildItem release/corresponding-source -File -Recurse
+          )
+          $distributed | Sort-Object FullName | ForEach-Object {
+            $hash = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower()
+            $relative = [IO.Path]::GetRelativePath((Resolve-Path release), $_.FullName).Replace('\', '/')
+            "$hash *$relative"
+          } | Set-Content -Encoding ascii release/SHA256SUMS
       - name: Attest release provenance
         if: startsWith(github.ref, 'refs/tags/')
         uses: actions/attest-build-provenance@v2
