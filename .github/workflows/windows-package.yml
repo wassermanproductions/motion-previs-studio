@@ -61,11 +61,16 @@ jobs:
             $named | ForEach-Object { Get-Item (Join-Path release $_) -ErrorAction SilentlyContinue }
             Get-ChildItem release/corresponding-source -File -Recurse
           )
-          $distributed | Sort-Object FullName | ForEach-Object {
+          $lines = $distributed | Sort-Object FullName | ForEach-Object {
             $hash = (Get-FileHash -Algorithm SHA256 $_.FullName).Hash.ToLower()
             $relative = [IO.Path]::GetRelativePath((Resolve-Path release), $_.FullName).Replace('\', '/')
             "$hash *$relative"
-          } | Set-Content -Encoding ascii release/SHA256SUMS
+          }
+          [IO.File]::WriteAllText(
+            (Join-Path (Resolve-Path release) 'SHA256SUMS'),
+            (($lines -join "`n") + "`n"),
+            [Text.Encoding]::ASCII
+          )
       - name: Attest release provenance
         uses: actions/attest-build-provenance@v2
         with:
