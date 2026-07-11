@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: |
+            public/models
+            public/mediapipe
+            runtime/bin
+          key: mps-assets-${{ runner.os }}-${{ hashFiles('ASSET_MANIFEST.json', 'package-lock.json') }}
+      - run: npm ci
+      - run: npm run verify
+      - run: npm run verify:quality
+      - run: npm run verify:engines
+      - run: npm run verify:platform
+      - run: npm run verify:metadata
+      - run: npm run verify:depth-backend
+      - run: npm run verify:encoder
+      - run: npm run verify:shutdown
+      - run: npm run verify:process-tree
+      - run: npm run verify:session
+      - run: npm run verify:blockout
+      - run: npm run verify:mcp-descriptor
+      - run: npm run verify:assets
+      - run: npm run build
+      - run: node --check mcp/motion-previs-mcp.mjs
+
+  native-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/cache@v4
+        with:
+          path: |
+            public/models
+            public/mediapipe
+            runtime/bin
+          key: mps-assets-${{ runner.os }}-${{ hashFiles('ASSET_MANIFEST.json', 'package-lock.json') }}
+      - run: npm ci
+      - name: Install smoke-test FFmpeg (macOS only; never packaged)
+        if: runner.os == 'macOS'
+        run: brew list ffmpeg >/dev/null 2>&1 || brew install ffmpeg
+      - run: npm run verify:platform
+      - run: npm run verify:encoder
+      - run: npm run verify:shutdown
+      - run: npm run verify:process-tree
+      - run: npm run build
+      - name: Verify secure packaged-renderer origin
+        run: node tests/secure-origin.cjs
+      - run: npm run verify:e2e

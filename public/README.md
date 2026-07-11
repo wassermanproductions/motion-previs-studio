@@ -1,10 +1,14 @@
-# Motion Previs Studio v3 Public Runtime Assets
+<!-- Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md. -->
+
+# Motion Previs Studio Public Runtime Assets
 
 The app uses generated runtime assets under `public/mediapipe`, `public/models`,
-and `public/bin`. They are intentionally not committed to this repository.
+and `runtime/bin`. They are intentionally not committed to this repository.
 
 Run `npm install` or `npm run prepare-assets` to populate them:
 
 - MediaPipe WASM files are copied from `@mediapipe/tasks-vision`.
-- The pose landmarker model is downloaded from the official MediaPipe model bucket.
-- `yt-dlp` is downloaded for URL imports when possible; otherwise the app falls back to `yt-dlp` on `PATH`.
+- All three pose landmarker task files are downloaded from pinned official
+  MediaPipe URLs and verified against `ASSET_MANIFEST.json`.
+- The platform-specific `yt-dlp` 2026.07.04 executable is stored outside the
+  web assets and verified against its publisher SHA-256 before packaging.

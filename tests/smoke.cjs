@@ -1,3 +1,5 @@
+// Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md.
+
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -6,6 +8,15 @@ const required = [
   'electron/main.cjs',
   'electron/preload.cjs',
   'electron/frameEncode.cjs',
+  'electron/shutdown.cjs',
+  'electron/processTree.cjs',
+  'electron/config.cjs',
+  'electron/portable.cjs',
+  'electron/blockoutProtocol.cjs',
+  'mcp/motion-previs-mcp.mjs',
+  'mcp/descriptor.mjs',
+  'mcp/config.mjs',
+  'ASSET_MANIFEST.json',
   'src/App.tsx',
   'src/lib/pose.ts',
   'src/lib/poseVideo.ts',

@@ -1,3 +1,5 @@
+/* Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md. */
+
 :root {
   color-scheme: dark;
   font-family:
@@ -108,28 +110,15 @@ button {
     #101417;
 }
 
-.window-dots {
-  display: flex;
-  gap: 8px;
-  padding-left: 16px;
+.platform-macos .top-chrome {
+  -webkit-app-region: drag;
 }
 
-.window-dots span {
-  width: 12px;
-  height: 12px;
-  border-radius: 999px;
-}
-
-.window-dots span:nth-child(1) {
-  background: #ff6159;
-}
-
-.window-dots span:nth-child(2) {
-  background: #ffbe2e;
-}
-
-.window-dots span:nth-child(3) {
-  background: #28c840;
+.platform-macos .top-chrome button,
+.platform-macos .top-chrome a,
+.platform-macos .top-chrome input,
+.platform-macos .top-chrome select {
+  -webkit-app-region: no-drag;
 }
 
 .top-title {
@@ -1560,6 +1549,11 @@ select {
   color: var(--text);
 }
 
+.community-maintainer {
+  color: var(--cyan);
+  font-weight: 700;
+}
+
 @media (max-width: 1160px) {
   .top-chrome {
     min-width: 0;
@@ -1641,10 +1635,6 @@ select {
     padding-top: 6px;
   }
 
-  .window-dots {
-    display: none;
-  }
-
   .top-title {
     justify-items: start;
     padding-left: 10px;
@@ -1692,6 +1682,14 @@ select {
 .brand-mark {
   display: flex;
   align-items: center;
+  padding-left: 14px;
+}
+
+.platform-macos .brand-mark {
+  padding-left: 84px;
+}
+
+.platform-windows .brand-mark {
   padding-left: 14px;
 }
 

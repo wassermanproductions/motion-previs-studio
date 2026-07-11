@@ -1,3 +1,5 @@
+// Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md.
+
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Activity,
@@ -35,6 +37,7 @@ import {
 } from 'lucide-react';
 import type {
   AnalysisManifest,
+  AppInfo,
   CameraMotionData,
   ControlLayerKey,
   ExportPreset,
@@ -70,10 +73,12 @@ import {
 } from './lib/pose';
 import { createPoseVideoBlob } from './lib/poseVideo';
 import { computeQualityReport, layerScore, trackingScore } from './lib/quality';
+import { buildRelinkedSession, sessionRestoreRequest, type SessionRestoreRequest } from './lib/sessionRestore';
 import { ThreePreview } from './components/ThreePreview';
 import logoUrl from './assets/logo.png';
 
 type Stage = 'idle' | 'importing' | 'preparing' | 'tracking' | 'ready' | 'exporting' | 'exported' | 'error';
+const APP_TITLE = `Motion Previs Studio v${__MPS_APP_VERSION__}`;
 
 // The five real analysis/export stages surfaced in the progress rail. Each maps
 // to callbacks that already exist in the lib layer.
@@ -150,6 +155,7 @@ export function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [versions, setVersions] = useState<Record<string, string>>({});
+  const [appInfo, setAppInfo] = useState<AppInfo | null>(null);
   const [poseSettings, setPoseSettings] = useState<PoseAnalysisSettings>(DEFAULT_POSE_SETTINGS);
   const [useCameraMove, setUseCameraMove] = useState(true);
   const [projectTitle, setProjectTitle] = useState('Motion Previs Project');
@@ -162,8 +168,9 @@ export function App() {
   const [exportPresets, setExportPresets] = useState<ExportPreset[]>(['seedance', 'comfyui', 'blender']);
   const [showHelp, setShowHelp] = useState(false);
   const [blockoutAvailable, setBlockoutAvailable] = useState(false);
-  const [restorePrompt, setRestorePrompt] = useState<SavedSession | null>(null);
+  const [restorePrompt, setRestorePrompt] = useState<SessionRestoreRequest | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const appDisplayName = appInfo?.displayName || APP_TITLE;
   const referenceVideoRef = useRef<HTMLVideoElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const toastId = useRef(0);
@@ -176,7 +183,12 @@ export function App() {
 
   useEffect(() => {
     window.motionPrevis?.getVersions().then(setVersions).catch(() => undefined);
+    window.motionPrevis?.getAppInfo().then(setAppInfo).catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    document.title = appDisplayName;
+  }, [appDisplayName]);
 
   // Offer to restore the last session on launch.
   useEffect(() => {
@@ -185,12 +197,10 @@ export function App() {
       ?.loadSession()
       .then((session) => {
         if (cancelled || !session) return;
-        // Always restore settings silently; only prompt to restore media when a
-        // real source file is still on disk.
+        // Restore settings silently, then offer either a normal restore or a
+        // relink when the machine-local media path has moved/disappeared.
         applySessionSettings(session);
-        if (session.sourceExists && session.sourcePath) {
-          setRestorePrompt(session);
-        }
+        setRestorePrompt(sessionRestoreRequest(session));
       })
       .catch(() => undefined);
     return () => {
@@ -277,8 +287,8 @@ export function App() {
     window.setTimeout(() => setToasts((current) => current.filter((toast) => toast.id !== id)), 4200);
   }
 
-  function applySessionSettings(session: SavedSession | ProjectSession) {
-    if (restoredRef.current) return;
+  function applySessionSettings(session: SavedSession | ProjectSession, force = false) {
+    if (restoredRef.current && !force) return;
     restoredRef.current = true;
     if (session.range) setRange({ start: session.range.start, end: session.range.end });
     if (typeof session.sampleFps === 'number') setSampleFps(session.sampleFps);
@@ -337,7 +347,7 @@ export function App() {
   }, [buildSession]);
 
   async function restoreLastSession() {
-    const session = restorePrompt;
+    const session = restorePrompt?.session;
     setRestorePrompt(null);
     if (!session?.sourcePath || !session.sourceUrl) return;
     // Re-probe the file through the bridge so we get fresh metadata + URL.
@@ -349,7 +359,7 @@ export function App() {
       const media: MediaInfo = {
         filePath: session.sourcePath,
         url: session.sourceUrl,
-        name: session.sourceName || session.sourcePath.split('/').pop() || 'Clip',
+        name: session.sourceName || session.sourcePath.split(/[\\/]/).pop() || 'Clip',
         duration: session.range ? Math.max(session.range.end, 8) : 8,
         width: 0,
         height: 0,
@@ -363,6 +373,30 @@ export function App() {
       setStage('idle');
       setMessage('Restored last project. Run analysis when ready.');
       pushToast('Last project restored.');
+    } catch (err) {
+      fail(err);
+    }
+  }
+
+  async function relinkLastSession() {
+    const request = restorePrompt;
+    if (!request || request.kind !== 'relink') return;
+    try {
+      if (!window.motionPrevis) throw new Error('Desktop bridge is not available in browser preview.');
+      setStage('importing');
+      setMessage(`Locate ${request.session.sourceName || 'the missing source clip'}`);
+      const media = await window.motionPrevis.openMedia();
+      if (!media) {
+        setStage('idle');
+        setMessage('Relink cancelled. Your saved settings are still available.');
+        return;
+      }
+      acceptSource(media);
+      applySessionSettings(request.session, true);
+      await window.motionPrevis.saveSession(buildRelinkedSession(request.session, media));
+      setRestorePrompt(null);
+      setMessage('Media relinked. Run analysis when ready.');
+      pushToast('Project media relinked.');
     } catch (err) {
       fail(err);
     }
@@ -472,7 +506,7 @@ export function App() {
         `Analysis complete. Pose ${pose.summary.detectedFrames}/${pose.frames.length} frames, ${pose.summary.filledFrames || 0} filled gaps.`
       );
     } catch (err) {
-      handleAnalysisError(err);
+      handleAnalysisError(controller.signal.aborted ? cancelledError() : err);
     } finally {
       abortRef.current = null;
     }
@@ -561,8 +595,9 @@ export function App() {
       window.motionPrevis?.saveSession({ ...buildSession(), lastBundlePath: saved.outputDir }).catch(() => undefined);
       return saved;
     } catch (err) {
-      handleAnalysisError(err);
-      throw err;
+      const normalized = controller.signal.aborted ? cancelledError() : err;
+      handleAnalysisError(normalized);
+      throw normalized;
     } finally {
       abortRef.current = null;
     }
@@ -570,6 +605,7 @@ export function App() {
 
   function cancelAnalysis() {
     abortRef.current?.abort();
+    void window.motionPrevis?.cancelAnalysis().catch(() => undefined);
     setMessage('Cancelling…');
   }
 
@@ -709,7 +745,7 @@ export function App() {
 
   const controlState: ControlState = {
     app: 'motion-previs-studio',
-    version: versions.app || '4.1.0',
+    version: versions.app || __MPS_APP_VERSION__,
     media: source
       ? { name: source.name, duration: source.duration, width: source.width, height: source.height }
       : null,
@@ -824,7 +860,7 @@ export function App() {
         if (!window.motionPrevis?.sendToBlockout) throw new Error('Desktop bridge is not available.');
         const result = await window.motionPrevis.sendToBlockout({ videoPath, mode: 'ghost', opacity: 0.5 });
         if (!result?.ok) throw new Error('Blockout did not accept the reference.');
-        return { ok: true as const, which, videoPath };
+        return { ok: true as const, which, videoPath, handoffVersion: result.handoffVersion };
       }
     }
   };
@@ -849,13 +885,13 @@ export function App() {
   }, []);
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell platform-${appInfo?.platform === 'darwin' ? 'macos' : appInfo?.platform === 'win32' ? 'windows' : 'linux'}`}>
       <header className="top-chrome">
         <div className="brand-mark" aria-hidden="true">
           <img src={logoUrl} alt="" className="brand-logo-sm" />
         </div>
         <div className="top-title">
-          <h1>Motion Previs Studio v4</h1>
+          <h1>{appDisplayName}</h1>
           <p>Created by Sam Wasserman</p>
           <div className="brand-links" aria-label="Wasserman links">
             <ExternalLinkButton url="https://wassermanproductions.com">WassermanProductions.com</ExternalLinkButton>
@@ -1027,7 +1063,7 @@ export function App() {
 
       <section className="workspace">
         {!source ? (
-          <WelcomeState onImport={loadFile} onHelp={() => setShowHelp(true)} />
+          <WelcomeState appTitle={appDisplayName} onImport={loadFile} onHelp={() => setShowHelp(true)} />
         ) : (
           <>
             <div className="workspace-toolbar">
@@ -1346,7 +1382,7 @@ export function App() {
                   Open Folder
                 </button>
                 <button className="secondary-action" onClick={() => window.motionPrevis?.revealPath(exportResult.zipPath)}>
-                  Reveal ZIP
+                  Show ZIP in Folder
                 </button>
               </div>
               <div className="blockout-send">
@@ -1375,6 +1411,9 @@ export function App() {
             <span>System</span>
           </div>
           <strong>{CREDIT_LINE}</strong>
+          {appInfo?.isCommunityBuild && appInfo.maintainer ? (
+            <span className="community-maintainer">Unofficial community build · Windows port maintained by {appInfo.maintainer}</span>
+          ) : null}
           <span className="system-links">
             <ExternalLinkButton url="https://wassermanproductions.com">WassermanProductions.com</ExternalLinkButton>
             <ExternalLinkButton url="https://wasserman.ai">Wasserman.ai</ExternalLinkButton>
@@ -1386,11 +1425,17 @@ export function App() {
       </div>
 
       {restorePrompt ? (
-        <div className="restore-banner" role="dialog" aria-label="Restore last project">
+        <div className="restore-banner" role="dialog" aria-label={restorePrompt.kind === 'relink' ? 'Relink missing project media' : 'Restore last project'}>
           <RotateCcw size={16} />
-          <span>Restore your last project — {restorePrompt.sourceName || 'previous clip'}?</span>
+          <span>
+            {restorePrompt.kind === 'relink'
+              ? `Last project media is missing — locate ${restorePrompt.session.sourceName || 'the previous clip'} to relink it.`
+              : `Restore your last project — ${restorePrompt.session.sourceName || 'previous clip'}?`}
+          </span>
           <div>
-            <button className="secondary-action" onClick={restoreLastSession}>Restore</button>
+            <button className="secondary-action" onClick={restorePrompt.kind === 'relink' ? relinkLastSession : restoreLastSession}>
+              {restorePrompt.kind === 'relink' ? 'Relink Media' : 'Restore'}
+            </button>
             <button className="secondary-action ghost" onClick={() => setRestorePrompt(null)}>Dismiss</button>
           </div>
         </div>
@@ -1417,11 +1462,17 @@ function throwIfCancelled(signal: AbortSignal) {
   }
 }
 
-function WelcomeState({ onImport, onHelp }: { onImport: () => void; onHelp: () => void }) {
+function cancelledError() {
+  const error = new Error('Analysis cancelled.');
+  error.name = 'AbortError';
+  return error;
+}
+
+function WelcomeState({ appTitle, onImport, onHelp }: { appTitle: string; onImport: () => void; onHelp: () => void }) {
   return (
     <div className="welcome-state">
       <img src={logoUrl} alt="Motion Previs Studio" className="welcome-logo" />
-      <h2>Motion Previs Studio v4</h2>
+      <h2>{appTitle}</h2>
       <p>Turn a reference shot into pose, depth, and camera control layers for AI-film previs and Blockout.</p>
       <div className="welcome-actions">
         <button className="primary-action" onClick={onImport}>

@@ -1,3 +1,5 @@
+// Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md.
+
 export type MediaInfo = {
   filePath: string;
   url: string;
@@ -9,6 +11,15 @@ export type MediaInfo = {
   videoCodec: string;
   audioCodec: string | null;
   sizeBytes: number;
+};
+
+export type AppInfo = {
+  platform: 'darwin' | 'win32' | 'linux';
+  appId: string;
+  displayName: string;
+  version: string;
+  isCommunityBuild: boolean;
+  maintainer: string | null;
 };
 
 export type AnalysisManifest = {

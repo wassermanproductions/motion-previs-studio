@@ -1,3 +1,5 @@
+<!-- Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md. -->
+
 # Motion Previs Studio MCP — drive the app from an AI agent
 
 Motion Previs Studio ships a small [MCP](https://modelcontextprotocol.io) server so an AI agent — **Claude Code, Codex, Hermes, or any MCP client** — can drive a **running** copy of the app: import a shot, trim the range, pick a reference mode, run the pose/depth/camera analysis, export the production pack, and hand a clip to Blockout. It's the same set of moves you'd make by hand, exposed as tools.
@@ -13,7 +15,7 @@ This is the agent-integration guide. For the product itself, see the [main READM
  (Claude Code)           (this bridge)           127.0.0.1:<rnd>   (electron/main)           (the app)
 ```
 
-- On launch, the app's main process starts a **localhost-only HTTP control server** on a **random port** with a **bearer token**, and writes discovery + auth to `~/.config/motion-previs/control.json` — `{ port, token, pid, startedAt }`, mode `0600`, deleted on quit.
+- On launch, the app's main process starts a **localhost-only HTTP control server** on a **random port** with a **bearer token**, and writes descriptor protocol v1 — `{ protocolVersion, app, appVersion, port, token, pid, startedAt, capabilities }` — to `~/.config/motion-previs/control.json` on macOS/Linux or `%APPDATA%\Motion Previs Studio\v4\control.json` on Windows. `MOTION_PREVIS_CONFIG_DIR` overrides the directory for CI and managed environments.
 - The bridge **`motion-previs-mcp.mjs`** is a zero-dependency Node ≥18 stdio server. It reads that file, forwards each `tools/call` to the control server, which relays it to the renderer over the `control:invoke` / `control:result` IPC pair and returns the result.
 - **Discovery and auth are automatic** — nothing to configure. The server binds `127.0.0.1` only and every request must carry the bearer token, so it is not reachable off-machine. The port is random, so there are no port conflicts.
 - **The app must be running.** If it isn't, every tool returns `Motion Previs Studio isn't running — launch the app first.` Launch with `npm run dev` (or the packaged app) so the control server comes up.
@@ -22,18 +24,17 @@ This is the agent-integration guide. For the product itself, see the [main READM
 
 ## Connect
 
-Use this repo's **absolute path** to `mcp/motion-previs-mcp.mjs` in every config below. On this machine that is:
-
-```
-/Users/eklpse1/Documents/New project/motion-previs-studio-v4/mcp/motion-previs-mcp.mjs
-```
+Use the bridge's **absolute path** in every config below. From a source checkout,
+that is `/ABSOLUTE/PATH/motion-previs-studio/mcp/motion-previs-mcp.mjs`. In an
+installed Windows build it is under the selected installation directory at
+`resources\mcp\motion-previs-mcp.mjs`.
 
 ### Claude Code
 
 One line:
 
 ```bash
-claude mcp add motion-previs -- node "/Users/eklpse1/Documents/New project/motion-previs-studio-v4/mcp/motion-previs-mcp.mjs"
+claude mcp add motion-previs -- node "/ABSOLUTE/PATH/motion-previs-studio/mcp/motion-previs-mcp.mjs"
 ```
 
 Then in a session, `/mcp` should list **motion-previs** as connected (once the app is running). Remove it with `claude mcp remove motion-previs`.
@@ -45,7 +46,7 @@ Add to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.motion-previs]
 command = "node"
-args = ["/Users/eklpse1/Documents/New project/motion-previs-studio-v4/mcp/motion-previs-mcp.mjs"]
+args = ["/ABSOLUTE/PATH/motion-previs-studio/mcp/motion-previs-mcp.mjs"]
 ```
 
 ### Hermes
@@ -108,7 +109,8 @@ get_state {}
 // → { media: null, range: {...}, analysis: { status: "idle" }, ... }
 
 // 2. Load a shot and trim it.
-import_file { "path": "/Users/me/clips/chase.mp4" }
+import_file { "path": "/path/to/clips/chase.mp4" } // macOS/Linux
+// import_file { "path": "C:\\Users\\me\\Videos\\chase.mp4" } // Windows
 set_range { "startS": 0, "endS": 3 }
 set_mode { "mode": "camera_only" }
 set_settings { "sampleFps": 6 }
@@ -135,7 +137,7 @@ screenshot {}
 | Symptom | Cause & fix |
 |---|---|
 | `Motion Previs Studio isn't running — launch the app first.` | The app isn't up (or has quit). Launch `npm run dev` / the packaged app and retry; the control server starts with the app. |
-| Tools connect but every call errors after a restart | Stale `~/.config/motion-previs/control.json` from a crashed session. It's normally deleted on quit and rewritten on launch. Quit the app fully and relaunch; if needed, delete the file and start the app again. |
+| Tools connect but every call errors after a restart | The descriptor may be stale after a crash. It is `~/.config/motion-previs/control.json` on macOS/Linux or `%APPDATA%\Motion Previs Studio\v4\control.json` on Windows. Quit the app fully and relaunch; if needed, delete the file and start the app again. |
 | `No media loaded` errors | Call `import_file` or `import_url` before `run_analysis`. |
 | `No completed analysis` on `export_pack` | Wait until `get_state` reports `analysis.status === "done"` before exporting. |
 | `node: command not found` in the client | The MCP client's PATH doesn't include Node. Use an absolute node path in the config's `command`, or launch the client from a shell where `node --version` works (Node ≥18). |

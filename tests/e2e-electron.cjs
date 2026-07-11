@@ -1,14 +1,32 @@
+// Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md.
+
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const net = require('node:net');
+const http = require('node:http');
 const { spawn } = require('node:child_process');
 const { _electron } = require('playwright');
+const configPaths = require('../electron/config.cjs');
+
+function canonicalPathForComparison(value) {
+  const canonical = fs.realpathSync.native ? fs.realpathSync.native(value) : fs.realpathSync(value);
+  return process.platform === 'win32' ? canonical.toLowerCase() : canonical;
+}
 
 const root = path.resolve(__dirname, '..');
 const outputDir = path.join(root, 'output', 'playwright');
-const controlDiscoveryFile = path.join(os.homedir(), '.config', 'motion-previs', 'control.json');
-const samplePath = process.env.MPS_SAMPLE || '/tmp/codex-previs-xrefs/josh-followup.mp4';
+const e2eRoot = process.env.MPS_E2E_ROOT || path.join(os.tmpdir(), 'OneDrive - Studio', "Director's Cut", 'José');
+const controlConfigDir = path.join(e2eRoot, 'control config');
+const userDataDir = path.join(e2eRoot, 'Motion Previs User Data');
+const blockoutConfigDir = path.join(e2eRoot, 'Blockout control');
+const testHome = path.join(e2eRoot, 'home');
+const testAppData = path.join(e2eRoot, 'AppData', 'Roaming');
+const liveBlockoutConfigDir = process.platform === 'win32'
+  ? path.join(testAppData, 'Blockout')
+  : path.join(testHome, '.config', 'blockout');
+const controlDiscoveryFile = configPaths.motionDiscoveryFile({ env: { MOTION_PREVIS_CONFIG_DIR: controlConfigDir } });
+const samplePath = process.env.MPS_SAMPLE || path.join(e2eRoot, 'source clips', 'sample clip.mp4');
 const planningData = {
   projectTitle: 'QA Motion Previs Project',
   sceneTitle: 'Scene QA',
@@ -52,14 +70,18 @@ const planningData = {
 };
 
 async function main() {
+  fs.rmSync(e2eRoot, { recursive: true, force: true });
   if (!fs.existsSync(samplePath)) {
-    throw new Error(`Sample video missing. Set MPS_SAMPLE to a local MP4. Tried: ${samplePath}`);
+    fs.mkdirSync(path.dirname(samplePath), { recursive: true });
+    await generateSampleClip(samplePath);
   }
   fs.mkdirSync(outputDir, { recursive: true });
+  const blockoutMock = await startMockBlockout();
 
   const port = await findOpenPort(Number(process.env.MPS_E2E_PORT || 5173));
   const rendererUrl = `http://127.0.0.1:${port}`;
-  const vite = spawn(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['vite', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
+  const viteCli = path.join(path.dirname(require.resolve('vite/package.json')), 'bin', 'vite.js');
+  const vite = spawn(process.execPath, [viteCli, '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
     cwd: root,
     env: process.env,
     stdio: ['ignore', 'pipe', 'pipe']
@@ -73,14 +95,51 @@ async function main() {
     electronApp = await _electron.launch({
       args: ['.'],
       cwd: root,
-      env: { ...process.env, ELECTRON_RENDERER_URL: rendererUrl }
+      env: {
+        ...process.env,
+        ELECTRON_RENDERER_URL: rendererUrl,
+        MOTION_PREVIS_CONFIG_DIR: controlConfigDir,
+        MOTION_PREVIS_USER_DATA_DIR: userDataDir,
+        BLOCKOUT_CONFIG_DIR: blockoutConfigDir,
+        HOME: testHome,
+        USERPROFILE: testHome,
+        APPDATA: testAppData
+      }
     });
     await waitForWindow(electronApp);
     await waitForRendererText(electronApp, 'Motion Previs Studio v4');
     await captureMainWindow(electronApp, path.join(outputDir, 'electron-idle.png'));
 
     // Agent-control server (MCP bridge backend) end-to-end over real HTTP.
-    const controlSummary = await runControlChecks();
+    const controlSummary = await runControlChecks(blockoutMock);
+
+    const forbiddenPath = path.join(e2eRoot, 'unregistered input', 'secret clip.mp4');
+    fs.mkdirSync(path.dirname(forbiddenPath), { recursive: true });
+    fs.copyFileSync(samplePath, forbiddenPath);
+    let forbiddenPrepareError = '';
+    try {
+      await executeInRenderer(
+        electronApp,
+        `window.motionPrevis.prepareAnalysis(${JSON.stringify({
+          sourcePath: forbiddenPath,
+          start: 0,
+          end: 1,
+          sampleFps: 6
+        })})`
+      );
+    } catch (error) {
+      forbiddenPrepareError = error?.message || String(error);
+    }
+    if (!/outside the app workspace and imported sources/i.test(forbiddenPrepareError)) {
+      throw new Error(`analysis:prepare did not reject an unregistered input path: ${forbiddenPrepareError}`);
+    }
+
+    // Register the main fixture through the same import IPC used by the UI;
+    // analysis IPC must never grant itself access to an arbitrary path.
+    await executeInRenderer(
+      electronApp,
+      `window.motionPrevis.importPath(${JSON.stringify(samplePath)})`
+    );
 
     const analysis = await executeInRenderer(
       electronApp,
@@ -114,6 +173,24 @@ async function main() {
     );
 
     if (!cameraMotionData.frames.length) throw new Error('Camera motion analysis returned no frames.');
+
+    let forbiddenSaveError = '';
+    try {
+      await executeInRenderer(
+        electronApp,
+        `window.motionPrevis.savePoseArtifacts(${JSON.stringify({
+          outputDir: analysis.outputDir,
+          referencePath: analysis.referencePath,
+          depthPath: forbiddenPath,
+          poseData: { fps: 6, duration: 1, frames: [] }
+        })})`
+      );
+    } catch (error) {
+      forbiddenSaveError = error?.message || String(error);
+    }
+    if (!/outside the app workspace and imported sources/i.test(forbiddenSaveError)) {
+      throw new Error(`analysis:save-pose-artifacts did not reject an unregistered input path: ${forbiddenSaveError}`);
+    }
 
     const exportResult = await executeInRenderer(
       electronApp,
@@ -156,6 +233,7 @@ async function main() {
     );
 
     await captureMainWindow(electronApp, path.join(outputDir, 'electron-after-pipeline.png'));
+    const relinkSummary = await runRelinkCheck(electronApp, analysis.referencePath, blockoutMock);
     await electronApp.close();
     electronApp = null;
 
@@ -196,6 +274,12 @@ async function main() {
     }
 
     const bundleManifest = JSON.parse(fs.readFileSync(exportResult.manifestPath, 'utf8'));
+    if (bundleManifest.schemaVersion !== 1) throw new Error('bundle_manifest.json schemaVersion must be 1.');
+    for (const value of Object.values(bundleManifest.files || {}).filter(Boolean)) {
+      if (path.isAbsolute(value) || /^[A-Za-z]:[\\/]/.test(value) || value.includes('\\')) {
+        throw new Error(`bundle_manifest.json contains a non-portable path: ${value}`);
+      }
+    }
     if (bundleManifest.planning?.subjectMode !== 'camera-only') {
       throw new Error('Planning data was not preserved in bundle_manifest.json.');
     }
@@ -244,6 +328,8 @@ async function main() {
           outputDir: exportResult.outputDir,
           zipPath: exportResult.zipPath,
           control: controlSummary,
+          relink: relinkSummary,
+          specialPathRoot: e2eRoot,
           screenshots: [
             path.join(outputDir, 'electron-idle.png'),
             path.join(outputDir, 'electron-after-pipeline.png')
@@ -258,6 +344,7 @@ async function main() {
       await electronApp.close().catch(() => undefined);
     }
     vite.kill('SIGTERM');
+    await blockoutMock.close();
   }
 }
 
@@ -265,7 +352,7 @@ async function main() {
 // Agent-control server checks — exercises electron/control.cjs + the renderer
 // control handler over real localhost HTTP, the same path the MCP bridge uses.
 // ---------------------------------------------------------------------------
-async function runControlChecks() {
+async function runControlChecks(blockoutMock) {
   const config = await readControlConfig();
   const base = `http://127.0.0.1:${config.port}`;
 
@@ -275,6 +362,9 @@ async function runControlChecks() {
   const healthBody = await health.json();
   if (!healthBody.ok || healthBody.app !== 'motion-previs-studio') {
     throw new Error('control /health payload is wrong.');
+  }
+  if (healthBody.protocolVersion !== 1 || config.protocolVersion !== 1) {
+    throw new Error('control descriptor protocol v1 was not advertised.');
   }
 
   // Bad token must be rejected.
@@ -301,12 +391,17 @@ async function runControlChecks() {
   if (state0.json.data.app !== 'motion-previs-studio') throw new Error('control get_state app name wrong.');
 
   // Generate a tiny 2s clip so analysis is fast and self-contained.
-  const clipPath = path.join(outputDir, 'control-sample.mp4');
+  const clipPath = path.join(e2eRoot, 'control inputs', "Director's control clip.mp4");
+  fs.mkdirSync(path.dirname(clipPath), { recursive: true });
   await generateSampleClip(clipPath);
 
   const imported = await rpc('import_file', { path: clipPath });
   if (!imported.json.ok) throw new Error(`control import_file failed: ${imported.json.error}`);
   if (!imported.json.data.name) throw new Error('control import_file returned no media name.');
+
+  const urlImported = await withMediaServer(clipPath, async (url) => rpc('import_url', { url }));
+  if (!urlImported.json.ok) throw new Error(`control import_url failed: ${urlImported.json.error}`);
+  if (!urlImported.json.data.name) throw new Error('control import_url returned no media name.');
 
   const ranged = await rpc('set_range', { startS: 0, endS: 2 });
   if (!ranged.json.ok) throw new Error(`control set_range failed: ${ranged.json.error}`);
@@ -349,6 +444,14 @@ async function runControlChecks() {
     throw new Error('control list_bundle returned no files.');
   }
 
+  const handedOff = await rpc('send_to_blockout', { which: 'reference' });
+  if (!handedOff.json.ok || handedOff.json.data.handoffVersion !== 1) {
+    throw new Error(`control send_to_blockout did not use handoff v1: ${JSON.stringify(handedOff.json)}`);
+  }
+  if (blockoutMock.calls.at(-1)?.params?.handoffVersion !== 1) {
+    throw new Error('Mock Blockout did not receive handoffVersion: 1.');
+  }
+
   const shot = await rpc('screenshot');
   if (!shot.json.ok || typeof shot.json.data.imageBase64 !== 'string' || shot.json.data.imageBase64.length < 1000) {
     throw new Error('control screenshot did not return a PNG base64 string.');
@@ -358,10 +461,155 @@ async function runControlChecks() {
     port: config.port,
     health: healthBody,
     mediaName: imported.json.data.name,
+    urlMediaName: urlImported.json.data.name,
     analysisStatus: status,
     bundlePath,
     bundleFileCount: listed.json.data.files.length,
     screenshotBytes: shot.json.data.imageBase64.length
+  };
+}
+
+async function withMediaServer(filePath, callback) {
+  const server = http.createServer((req, res) => {
+    if (!req.url?.startsWith('/clip.mp4')) {
+      res.writeHead(404).end();
+      return;
+    }
+    const stat = fs.statSync(filePath);
+    const range = /bytes=(\d+)-(\d*)/.exec(req.headers.range || '');
+    const start = range ? Number(range[1]) : 0;
+    const end = range && range[2] ? Number(range[2]) : stat.size - 1;
+    res.writeHead(range ? 206 : 200, {
+      'Content-Type': 'video/mp4',
+      'Content-Length': String(end - start + 1),
+      'Accept-Ranges': 'bytes',
+      ...(range ? { 'Content-Range': `bytes ${start}-${end}/${stat.size}` } : {})
+    });
+    if (req.method === 'HEAD') res.end();
+    else fs.createReadStream(filePath, { start, end }).pipe(res);
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  try {
+    return await callback(`http://127.0.0.1:${address.port}/clip.mp4`);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+async function runRelinkCheck(electronApp, handoffVideoPath, blockoutMock) {
+  const missingPath = path.join(e2eRoot, 'moved away', 'missing source.mov');
+  const saved = await executeInRenderer(
+    electronApp,
+    `window.motionPrevis.saveSession(${JSON.stringify({
+      sourcePath: missingPath,
+      sourceName: 'missing source.mov',
+      range: { start: 0.25, end: 1.75 },
+      sampleFps: 6,
+      subjectMode: 'camera-only',
+      resolution: 'auto'
+    })})`
+  );
+  if (!saved.saved) throw new Error('Could not create missing-media relink fixture.');
+  await electronApp.evaluate(({ dialog }, selectedPath) => {
+    dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selectedPath] });
+  }, samplePath);
+  await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.reload());
+  await waitForRendererText(electronApp, 'Relink Media');
+  await executeInRenderer(
+    electronApp,
+    `(() => {
+      const button = [...document.querySelectorAll('button')].find((item) => item.textContent?.includes('Relink Media'));
+      if (!button) throw new Error('Relink Media button not found.');
+      button.click();
+      return true;
+    })()`
+  );
+  await waitForRendererText(electronApp, path.basename(samplePath));
+  const session = await executeInRenderer(electronApp, 'window.motionPrevis.loadSession()');
+  if (
+    canonicalPathForComparison(session.sourcePath) !== canonicalPathForComparison(samplePath)
+    || session.sourceExists !== true
+  ) {
+    throw new Error('Relink did not update the machine-local session source path.');
+  }
+  if (session.range?.start !== 0.25 || session.range?.end !== 1.75) {
+    throw new Error('Relink did not preserve the saved shot range.');
+  }
+  const postRestart = await executeInRenderer(
+    electronApp,
+    `window.motionPrevis.sendToBlockout(${JSON.stringify({ videoPath: handoffVideoPath, mode: 'ghost', opacity: 0.5 })})`
+  );
+  if (!postRestart.ok || postRestart.handoffVersion !== 1 || blockoutMock.calls.at(-1)?.params?.handoffVersion !== 1) {
+    throw new Error('Motion to Blockout handoff v1 failed after renderer restart.');
+  }
+  return { sourcePath: session.sourcePath, range: session.range, postRestartHandoffVersion: postRestart.handoffVersion };
+}
+
+async function startMockBlockout() {
+  const token = '0123456789abcdef0123456789abcdef';
+  const calls = [];
+  const server = http.createServer((req, res) => {
+    const send = (status, value) => {
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(value));
+    };
+    if (req.method === 'GET' && req.url === '/health') {
+      send(200, { ok: true, protocolVersion: 1, app: 'blockout', appVersion: '5.0.0' });
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/rpc') {
+      if (req.headers.authorization !== `Bearer ${token}`) {
+        send(401, { ok: false, error: 'unauthorized' });
+        return;
+      }
+      let body = '';
+      req.on('data', (chunk) => { body += chunk; });
+      req.on('end', () => {
+        const parsed = JSON.parse(body || '{}');
+        calls.push(parsed);
+        send(200, { ok: true, data: { attached: true, handoffVersion: parsed.params?.handoffVersion || 0 } });
+      });
+      return;
+    }
+    send(404, { ok: false, error: 'not found' });
+  });
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const address = server.address();
+  // Put a valid-but-stale descriptor in the highest-priority override and the
+  // live descriptor in the normal platform location. Motion must probe past
+  // the stale file instead of treating its mere presence as availability.
+  fs.mkdirSync(blockoutConfigDir, { recursive: true });
+  fs.writeFileSync(path.join(blockoutConfigDir, 'control.json'), JSON.stringify({
+    protocolVersion: 1,
+    app: 'blockout',
+    appVersion: '4.9.9',
+    port: 1,
+    token: 'stale-token',
+    pid: 999999,
+    startedAt: '2000-01-01T00:00:00.000Z',
+    capabilities: ['health', 'rpc']
+  }));
+  fs.mkdirSync(liveBlockoutConfigDir, { recursive: true });
+  fs.writeFileSync(path.join(liveBlockoutConfigDir, 'control.json'), JSON.stringify({
+    protocolVersion: 1,
+    app: 'blockout',
+    appVersion: '5.0.0',
+    port: address.port,
+    token,
+    pid: process.pid,
+    startedAt: new Date().toISOString(),
+    capabilities: ['health', 'rpc', 'motion-handoff-v1']
+  }));
+  return {
+    calls,
+    close: () => new Promise((resolve) => server.close(resolve))
   };
 }
 
@@ -380,7 +628,9 @@ async function readControlConfig() {
 }
 
 function generateSampleClip(outPath) {
-  const ffmpeg = require('ffmpeg-static');
+  const preparedWindowsFfmpeg = path.join(root, 'runtime', 'media', 'win32-x64', 'ffmpeg.exe');
+  const ffmpeg = process.env.MOTION_PREVIS_FFMPEG ||
+    (process.platform === 'win32' && fs.existsSync(preparedWindowsFfmpeg) ? preparedWindowsFfmpeg : 'ffmpeg');
   return new Promise((resolve, reject) => {
     const child = spawn(
       ffmpeg,

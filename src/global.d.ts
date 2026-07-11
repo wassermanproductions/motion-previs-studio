@@ -1,3 +1,5 @@
+// Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md.
+
 import type {
   AnalysisManifest,
   CameraMotionData,
@@ -9,6 +11,7 @@ import type {
   ProjectSession,
   SavedSession
 } from './types';
+import type { AppInfo } from './types';
 
 declare global {
   interface Window {
@@ -48,17 +51,20 @@ declare global {
       encodeFramesBegin: (payload: { fps: number; width: number; height: number }) => Promise<{ sessionId: string }>;
       encodeFramesFrame: (payload: { sessionId: string; buffer: ArrayBuffer }) => Promise<{ frames: number }>;
       encodeFramesEnd: (payload: { sessionId: string }) => Promise<{ buffer: ArrayBuffer; frames: number }>;
+      encodeFramesCancel: (payload: { sessionId: string }) => Promise<{ cancelled: boolean }>;
+      cancelAnalysis: () => Promise<{ cancelled: number }>;
       openPath: (targetPath: string) => Promise<string>;
       revealPath: (targetPath: string) => Promise<void>;
       openExternal: (url: string) => Promise<void>;
       getVersions: () => Promise<Record<string, string>>;
+      getAppInfo: () => Promise<AppInfo>;
       saveSession: (session: ProjectSession) => Promise<{ saved: boolean; path: string }>;
       loadSession: () => Promise<SavedSession | null>;
       sendToBlockout: (payload: {
         videoPath: string;
         mode?: 'ghost' | 'pip';
         opacity?: number;
-      }) => Promise<{ ok: boolean; mode: string; opacity: number; result?: unknown }>;
+      }) => Promise<{ ok: boolean; mode: string; opacity: number; handoffVersion: number; result?: unknown }>;
       blockoutStatus: () => Promise<{ available: boolean }>;
       onControlInvoke: (
         cb: (id: string, action: string, params: unknown) => void

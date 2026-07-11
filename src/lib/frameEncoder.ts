@@ -1,3 +1,5 @@
+// Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md.
+
 /**
  * Deterministic frame encoder (renderer side).
  *
@@ -30,11 +32,12 @@ type EncoderBridge = {
   encodeFramesBegin: (payload: { fps: number; width: number; height: number }) => Promise<{ sessionId: string }>;
   encodeFramesFrame: (payload: { sessionId: string; buffer: ArrayBuffer }) => Promise<{ frames: number }>;
   encodeFramesEnd: (payload: { sessionId: string }) => Promise<{ buffer: ArrayBuffer; frames: number }>;
+  encodeFramesCancel: (payload: { sessionId: string }) => Promise<{ cancelled: boolean }>;
 };
 
 function bridge(): EncoderBridge {
   const api = (window as unknown as { motionPrevis?: Partial<EncoderBridge> }).motionPrevis;
-  if (!api || !api.encodeFramesBegin || !api.encodeFramesFrame || !api.encodeFramesEnd) {
+  if (!api || !api.encodeFramesBegin || !api.encodeFramesFrame || !api.encodeFramesEnd || !api.encodeFramesCancel) {
     throw new Error('Deterministic frame encoder bridge is not available (desktop only).');
   }
   return api as EncoderBridge;
@@ -78,7 +81,7 @@ export async function encodeFrames(options: EncodeFramesOptions): Promise<Blob> 
   } catch (error) {
     // Best-effort teardown so a failed render doesn't leak an ffmpeg session.
     try {
-      await api.encodeFramesEnd({ sessionId });
+      await api.encodeFramesCancel({ sessionId });
     } catch {
       /* already torn down or never started */
     }
@@ -95,5 +98,5 @@ function abortError(): Error {
 /** True when the deterministic encoder bridge is present (i.e. running in Electron). */
 export function isFrameEncoderAvailable(): boolean {
   const api = (window as unknown as { motionPrevis?: Partial<EncoderBridge> }).motionPrevis;
-  return Boolean(api && api.encodeFramesBegin && api.encodeFramesFrame && api.encodeFramesEnd);
+  return Boolean(api && api.encodeFramesBegin && api.encodeFramesFrame && api.encodeFramesEnd && api.encodeFramesCancel);
 }

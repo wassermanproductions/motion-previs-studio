@@ -1,5 +1,7 @@
 'use strict';
 
+// Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md.
+
 /**
  * Security helpers for Motion Previs Studio v4.
  *
@@ -14,7 +16,6 @@
 
 const path = require('node:path');
 const fs = require('node:fs');
-const { pathToFileURL } = require('node:url');
 
 const SCHEME = 'mps';
 
@@ -23,11 +24,13 @@ const allowedRoots = new Set();
 // Individual absolute file paths that are allowed (specific imported sources).
 const allowedFiles = new Set();
 
-function normalizeAbsolute(input) {
+function normalizeAbsolute(input, { mustExist = false } = {}) {
   if (typeof input !== 'string' || !input.trim()) return null;
   try {
     // Resolve to an absolute, normalized path (collapses .. and .).
-    return path.resolve(input);
+    const resolved = path.resolve(input);
+    if (!fs.existsSync(resolved)) return mustExist ? null : resolved;
+    return fs.realpathSync.native ? fs.realpathSync.native(resolved) : fs.realpathSync(resolved);
   } catch {
     return null;
   }
@@ -35,7 +38,7 @@ function normalizeAbsolute(input) {
 
 /** Register a directory root; everything beneath it becomes loadable/openable. */
 function allowRoot(dir) {
-  const abs = normalizeAbsolute(dir);
+  const abs = normalizeAbsolute(dir, { mustExist: true });
   if (abs) allowedRoots.add(abs);
   return abs;
 }
@@ -44,7 +47,7 @@ function allowRoot(dir) {
  *  is NOT added — only the exact file and files that share the recorded dir are
  *  allowed via allowImportSource). */
 function allowFile(filePath) {
-  const abs = normalizeAbsolute(filePath);
+  const abs = normalizeAbsolute(filePath, { mustExist: true });
   if (abs) allowedFiles.add(abs);
   return abs;
 }
@@ -62,46 +65,99 @@ function allowImportSource(filePath, { dirAsRoot = false } = {}) {
   return abs;
 }
 
-function isPathWithinRoot(candidateAbs, rootAbs) {
-  if (candidateAbs === rootAbs) return true;
-  const rel = path.relative(rootAbs, candidateAbs);
-  return rel !== '' && !rel.startsWith('..') && !path.isAbsolute(rel);
+function isPathWithinRoot(candidateAbs, rootAbs, platform = process.platform) {
+  const p = platform === 'win32' ? path.win32 : path;
+  const normalizeForCompare = (value) => (platform === 'win32' ? value.toLowerCase() : value);
+  if (normalizeForCompare(candidateAbs) === normalizeForCompare(rootAbs)) return true;
+  const rel = p.relative(rootAbs, candidateAbs);
+  return rel !== '' && !rel.startsWith('..') && !p.isAbsolute(rel);
 }
 
 /** True if an absolute path is permitted by the current allowlist. */
 function isAllowedPath(input) {
-  const abs = normalizeAbsolute(input);
+  // Canonicalize the existing target before comparing. On Windows this resolves
+  // directory junctions, preventing a lexical child path from escaping a root.
+  const abs = normalizeAbsolute(input, { mustExist: true });
   if (!abs) return false;
-  if (allowedFiles.has(abs)) return true;
+  if (hasPath(allowedFiles, abs)) return true;
   for (const root of allowedRoots) {
     if (isPathWithinRoot(abs, root)) return true;
   }
   return false;
 }
 
+/** Return the canonical path only when it is an allowlisted regular file. */
+function canonicalAllowedFile(input) {
+  const abs = normalizeAbsolute(input, { mustExist: true });
+  if (!abs || !isAllowedPath(abs)) return null;
+  try {
+    return fs.statSync(abs).isFile() ? abs : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Return the canonical path only when it is an allowlisted directory. */
+function canonicalAllowedDirectory(input) {
+  const abs = normalizeAbsolute(input, { mustExist: true });
+  if (!abs || !isAllowedPath(abs)) return null;
+  try {
+    return fs.statSync(abs).isDirectory() ? abs : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Convert an absolute path to an mps:// URL. */
 function toAppUrl(filePath) {
-  const abs = normalizeAbsolute(filePath);
+  const abs = normalizeAbsolute(filePath, { mustExist: true });
   if (!abs) throw new Error('Cannot build media URL for empty path.');
-  // Reuse pathToFileURL to get correct percent-encoding, then swap the scheme
-  // and move the path into the URL path (host stays empty).
-  const fileUrl = pathToFileURL(abs);
-  return `${SCHEME}://media${fileUrl.pathname}`;
+  // Store the complete absolute path as a URL query value. Unlike translating
+  // a file:// pathname, this preserves Windows drive letters and UNC hosts.
+  const url = new URL(`${SCHEME}://media/file`);
+  url.searchParams.set('path', abs);
+  return url.href;
 }
 
 /** Decode an mps:// request URL back to an absolute filesystem path. */
-function urlToPath(requestUrl) {
+function urlToPath(requestUrl, platform = process.platform) {
+  const pApi = platform === 'win32' ? path.win32 : path;
   const parsed = new URL(requestUrl);
+  if (parsed.protocol !== `${SCHEME}:` || parsed.hostname !== 'media') {
+    throw new Error('Invalid Motion Previs media URL.');
+  }
+  const encodedPath = parsed.searchParams.get('path');
+  if (encodedPath) {
+    if (!pApi.isAbsolute(encodedPath)) throw new Error('Media URL path must be absolute.');
+    return pApi.normalize(encodedPath);
+  }
+  // Backward compatibility for URLs written by v4.1.0 and earlier.
   // pathname is percent-encoded and starts with '/'. On Windows the drive letter
   // path is like /C:/... ; decodeURIComponent + normalize handles both.
   let p = decodeURIComponent(parsed.pathname);
-  if (process.platform === 'win32' && /^\/[A-Za-z]:/.test(p)) {
+  if (platform === 'win32' && /^\/[A-Za-z]:/.test(p)) {
     p = p.slice(1);
   }
-  return path.normalize(p);
+  return pApi.normalize(p);
+}
+
+function hasPath(set, candidate) {
+  if (process.platform !== 'win32') return set.has(candidate);
+  const folded = candidate.toLowerCase();
+  for (const item of set) {
+    if (item.toLowerCase() === folded) return true;
+  }
+  return false;
 }
 
 const CONTENT_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.wasm': 'application/wasm',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
   '.mp4': 'video/mp4',
   '.m4v': 'video/mp4',
   '.mov': 'video/quicktime',
@@ -148,18 +204,46 @@ function registerPrivilegedScheme(protocol) {
 
 /**
  * Install the protocol handler. MUST be called after app 'ready'.
- * Serves only allowlisted, existing regular files; everything else 403/404s.
+ * Serves only fixed-root application assets or allowlisted existing files;
+ * everything else is rejected.
  */
-function installProtocolHandler(protocol) {
+function appAssetPathFromUrl(requestUrl, appAssetRoot, platform = process.platform) {
+  const p = platform === 'win32' ? path.win32 : path;
+  const parsed = new URL(requestUrl);
+  if (parsed.protocol !== `${SCHEME}:` || parsed.hostname !== 'app') {
+    throw new Error('Invalid Motion Previs application URL.');
+  }
+  const decodedPath = decodeURIComponent(parsed.pathname);
+  if (decodedPath.includes('\0') || decodedPath.includes('\\')) {
+    throw new Error('Invalid Motion Previs application asset path.');
+  }
+  const root = p.resolve(appAssetRoot);
+  const relative = decodedPath.replace(/^\/+/, '');
+  const candidate = p.resolve(root, relative);
+  if (candidate === root || !isPathWithinRoot(candidate, root, platform)) {
+    throw new Error('Motion Previs application asset path escaped its root.');
+  }
+  return candidate;
+}
+
+function installProtocolHandler(protocol, options = {}) {
+  const appAssetRoot = options.appAssetRoot ? path.resolve(options.appAssetRoot) : null;
   protocol.handle(SCHEME, async (request) => {
     let filePath;
+    let isApplicationAsset = false;
     try {
-      filePath = urlToPath(request.url);
+      const parsed = new URL(request.url);
+      if (parsed.hostname === 'app' && appAssetRoot) {
+        filePath = appAssetPathFromUrl(request.url, appAssetRoot);
+        isApplicationAsset = true;
+      } else {
+        filePath = urlToPath(request.url);
+      }
     } catch {
       return new Response('Bad request', { status: 400 });
     }
 
-    if (!isAllowedPath(filePath)) {
+    if (!isApplicationAsset && !isAllowedPath(filePath)) {
       return new Response('Forbidden', { status: 403 });
     }
 
@@ -238,9 +322,14 @@ module.exports = {
   allowRoot,
   allowFile,
   allowImportSource,
+  normalizeAbsolute,
+  isPathWithinRoot,
   isAllowedPath,
+  canonicalAllowedFile,
+  canonicalAllowedDirectory,
   toAppUrl,
   urlToPath,
+  appAssetPathFromUrl,
   registerPrivilegedScheme,
   installProtocolHandler
 };

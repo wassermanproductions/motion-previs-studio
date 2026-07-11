@@ -1,6 +1,9 @@
+# Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md.
+
 cff-version: 1.2.0
-message: "If you use Motion Previs Studio v3 in your work, please cite and credit Sam Wasserman."
-title: "Motion Previs Studio v3"
+message: "If you use Motion Previs Studio in your work, please cite and credit Sam Wasserman."
+title: "Motion Previs Studio"
+version: "4.1.0"
 authors:
   - family-names: "Wasserman"
     given-names: "Sam"

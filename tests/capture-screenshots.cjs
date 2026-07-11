@@ -1,3 +1,5 @@
+// Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md.
+
 const fs = require('node:fs');
 const path = require('node:path');
 const { _electron } = require('playwright');
@@ -30,7 +32,7 @@ async function main() {
 
     const page = await electronApp.firstWindow();
     page.setDefaultTimeout(30000);
-    await page.waitForSelector('text=Motion Previs Studio v3');
+    await page.waitForSelector('text=Motion Previs Studio');
     await page.waitForSelector('text=WassermanProductions.com');
     await page.getByRole('button', { name: 'Import' }).click();
     await page.waitForSelector(`text=${path.basename(samplePath)}`);
@@ -43,7 +45,7 @@ async function main() {
     await resetPanelScroll(page);
 
     await page.screenshot({
-      path: path.join(screenshotDir, 'motion-previs-studio-v3-home.png')
+      path: path.join(screenshotDir, 'motion-previs-studio-v4-home.png')
     });
 
     await page.locator('.shot-plan-panel').evaluate((element) => {
@@ -54,7 +56,7 @@ async function main() {
     });
     await page.waitForTimeout(200);
     await page.screenshot({
-      path: path.join(screenshotDir, 'motion-previs-studio-v3-shot-planning.png')
+      path: path.join(screenshotDir, 'motion-previs-studio-v4-shot-planning.png')
     });
 
     await page.locator('.left-sidebar').evaluate((element) => {
@@ -65,16 +67,16 @@ async function main() {
     });
     await page.waitForTimeout(200);
     await page.screenshot({
-      path: path.join(screenshotDir, 'motion-previs-studio-v3-production-pack.png')
+      path: path.join(screenshotDir, 'motion-previs-studio-v4-production-pack.png')
     });
 
     console.log(
       JSON.stringify(
         {
           screenshots: [
-            path.join(screenshotDir, 'motion-previs-studio-v3-home.png'),
-            path.join(screenshotDir, 'motion-previs-studio-v3-shot-planning.png'),
-            path.join(screenshotDir, 'motion-previs-studio-v3-production-pack.png')
+            path.join(screenshotDir, 'motion-previs-studio-v4-home.png'),
+            path.join(screenshotDir, 'motion-previs-studio-v4-shot-planning.png'),
+            path.join(screenshotDir, 'motion-previs-studio-v4-production-pack.png')
           ]
         },
         null,

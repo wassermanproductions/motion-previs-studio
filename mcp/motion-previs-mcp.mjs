@@ -1,21 +1,36 @@
 #!/usr/bin/env node
+// Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md.
+
 /**
  * Motion Previs Studio MCP server — zero-dependency Node >=18 stdio bridge.
  *
  * Speaks the MCP stdio transport: newline-delimited JSON-RPC 2.0 on
  * stdin/stdout (NOT Content-Length framed). Each tools/call is forwarded to the
  * running app's HTTP control server, discovered via
- * ~/.config/motion-previs/control.json (random localhost port + bearer token).
+ * the platform config directory's control.json descriptor.
  *
  * Uses only node built-ins + global fetch — run directly with `node`.
  */
 
 import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { validateControlDescriptor } from './descriptor.mjs';
+import { motionDiscoveryFile } from './config.mjs';
 
-const DISCOVERY_FILE = join(homedir(), '.config', 'motion-previs', 'control.json');
+const appPackage = await readAppPackage();
+const APP_VERSION = appPackage.version;
+const DISCOVERY_FILE = motionDiscoveryFile(appPackage);
 const PROTOCOL_VERSION = '2024-11-05';
+
+async function readAppPackage() {
+  for (const url of [new URL('../package.json', import.meta.url), new URL('../APP_METADATA.json', import.meta.url)]) {
+    try {
+      return JSON.parse(await readFile(url, 'utf8'));
+    } catch {
+      // Source checkout uses package.json; installed builds use APP_METADATA.
+    }
+  }
+  throw new Error('Motion Previs Studio app metadata is missing.');
+}
 
 /* --------------------------------- tools -------------------------------- */
 
@@ -148,7 +163,8 @@ const NOT_RUNNING = "Motion Previs Studio isn't running — launch the app first
 async function callControl(action, params) {
   let config;
   try {
-    config = JSON.parse(await readFile(DISCOVERY_FILE, 'utf-8'));
+    config = validateControlDescriptor(JSON.parse(await readFile(DISCOVERY_FILE, 'utf-8')));
+    if (!config) return { error: NOT_RUNNING };
   } catch {
     return { error: NOT_RUNNING };
   }
@@ -211,7 +227,7 @@ async function handle(msg) {
       reply(id, {
         protocolVersion: PROTOCOL_VERSION,
         capabilities: { tools: {} },
-        serverInfo: { name: 'motion-previs-studio', version: '1.0.0' }
+        serverInfo: { name: 'motion-previs-studio', version: APP_VERSION }
       });
       return;
     case 'notifications/initialized':

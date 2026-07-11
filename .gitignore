@@ -1,3 +1,5 @@
+# Modified for cross-platform Windows support in 2026; see MODIFICATIONS.md.
+
 .DS_Store
 
 # Dependencies
@@ -22,6 +24,10 @@ output/
 public/bin/
 public/mediapipe/
 public/models/
+runtime/bin/
+runtime/media/
+runtime/APP_METADATA.json
+work/
 
 # Local preserved v1 source snapshot; the public repository is v2 source.
 src/App.v1.tsx
