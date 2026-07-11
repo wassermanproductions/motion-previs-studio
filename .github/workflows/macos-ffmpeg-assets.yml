@@ -1,0 +1,37 @@
+name: macOS FFmpeg assets
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Confirm native architecture
+        shell: bash
+        run: test "$(node -p process.arch)" = "arm64"
+      - name: Install source-build prerequisites
+        run: brew install pkg-config yasm nasm cmake meson ninja
+      - run: npm ci
+      - name: Build and audit the pinned FFmpeg pair
+        run: npm run prepare:ffmpeg:mac
+        env:
+          # Older FFmpeg build dependencies declare cmake_minimum_required < 3.5,
+          # which CMake 4 rejects without this compatibility floor.
+          CMAKE_POLICY_VERSION_MINIMUM: '3.5'
+      - name: Archive audited FFmpeg pair
+        shell: bash
+        run: tar -czf mps-ffmpeg-macos-arm64.tar.gz -C runtime/media darwin-arm64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mps-ffmpeg-macos-arm64
+          if-no-files-found: error
+          path: mps-ffmpeg-macos-arm64.tar.gz
