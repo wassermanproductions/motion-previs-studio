@@ -7,6 +7,7 @@ const path = require('node:path');
 const config = require('../electron/config.cjs');
 const portable = require('../electron/portable.cjs');
 const security = require('../electron/security.cjs');
+const canonicalPath = (value) => fs.realpathSync.native ? fs.realpathSync.native(value) : fs.realpathSync(value);
 
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'mps-platform-'));
 try {
@@ -21,9 +22,9 @@ try {
 
   security.allowRoot(allowed);
   assert.equal(security.isAllowedPath(clip), true);
-  assert.equal(security.canonicalAllowedFile(clip), fs.realpathSync(clip));
+  assert.equal(security.canonicalAllowedFile(clip), canonicalPath(clip));
   assert.equal(security.canonicalAllowedFile(secret), null, 'unregistered input files must not be readable by analysis IPC');
-  assert.equal(security.canonicalAllowedDirectory(allowed), fs.realpathSync(allowed));
+  assert.equal(security.canonicalAllowedDirectory(allowed), canonicalPath(allowed));
   assert.equal(security.canonicalAllowedDirectory(outside), null);
   const mediaUrl = security.toAppUrl(clip);
   assert.equal(security.urlToPath(mediaUrl), fs.realpathSync(clip));

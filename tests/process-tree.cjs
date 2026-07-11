@@ -50,6 +50,18 @@ async function main() {
   preclosed.exitCode = 0;
   assert.equal(await processTree.terminateChildTree(preclosed), true);
 
+  const exitedBeforeClose = fakeChild();
+  let releaseClose;
+  const trackedClose = new Promise((resolve) => { releaseClose = resolve; });
+  exitedBeforeClose.exitCode = 0;
+  const awaitingClose = processTree.terminateChildTree(exitedBeforeClose, trackedClose, { timeoutMs: 100 });
+  let settled = false;
+  awaitingClose.then(() => { settled = true; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false, 'exit must not be treated as close when a close tracker exists');
+  releaseClose(0);
+  assert.equal(await awaitingClose, true);
+
   console.log('verify:process-tree: OK');
 }
 

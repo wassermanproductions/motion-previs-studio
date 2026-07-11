@@ -53,13 +53,16 @@ async function waitBounded(promise, timeoutMs) {
  * hold file handles until the process eventually exits.
  */
 async function terminateChildTree(child, closePromise = waitForChildClose(child), options = {}) {
-  if (childHasClosed(child)) return true;
-
   const platform = options.platform || process.platform;
   const timeoutMs = Math.max(1, Number(options.timeoutMs || DEFAULT_TERMINATION_TIMEOUT_MS));
   const spawnProcess = options.spawnProcess || spawn;
   const deadline = Date.now() + timeoutMs;
   const remaining = () => Math.max(0, deadline - Date.now());
+
+  // exitCode/signalCode are set by the earlier `exit` event. File handles and
+  // stdio are not guaranteed released until `close`; an explicitly tracked
+  // closePromise therefore remains authoritative during cleanup.
+  if (childHasClosed(child)) return waitBounded(closePromise, remaining());
 
   if (platform === 'win32' && child.pid) {
     let killer;
@@ -79,19 +82,16 @@ async function terminateChildTree(child, closePromise = waitForChildClose(child)
       // Fall through to Node's direct-child termination fallback.
     }
 
-    if (childHasClosed(child)) return true;
+    if (childHasClosed(child)) return waitBounded(closePromise, remaining());
     try { child.kill(); } catch { /* best effort */ }
-    await waitBounded(closePromise, remaining());
-    return childHasClosed(child);
+    return waitBounded(closePromise, remaining());
   }
 
-  try { child.kill('SIGTERM'); } catch { return childHasClosed(child); }
-  await waitBounded(closePromise, Math.min(POSIX_GRACE_MS, remaining()));
-  if (childHasClosed(child)) return true;
+  try { child.kill('SIGTERM'); } catch { return waitBounded(closePromise, remaining()); }
+  if (await waitBounded(closePromise, Math.min(POSIX_GRACE_MS, remaining()))) return true;
 
-  try { child.kill('SIGKILL'); } catch { return childHasClosed(child); }
-  await waitBounded(closePromise, remaining());
-  return childHasClosed(child);
+  try { child.kill('SIGKILL'); } catch { return waitBounded(closePromise, remaining()); }
+  return waitBounded(closePromise, remaining());
 }
 
 module.exports = {

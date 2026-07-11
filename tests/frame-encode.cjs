@@ -4,7 +4,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const { EventEmitter } = require('node:events');
 const frameEncode = require('../electron/frameEncode.cjs');
-const ffmpeg = process.env.MOTION_PREVIS_FFMPEG || 'ffmpeg';
+// This test exercises spawn/cancel/close cleanup, not codec output. Node is a
+// deterministic cross-platform child executable and avoids relying on a
+// system FFmpeg installation on clean CI runners.
+const ffmpeg = process.env.MOTION_PREVIS_FFMPEG || process.execPath;
 
 async function main() {
   const preclosed = Object.assign(new EventEmitter(), { exitCode: 0, signalCode: null });
