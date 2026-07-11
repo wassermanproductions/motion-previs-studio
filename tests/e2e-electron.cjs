@@ -617,7 +617,9 @@ async function readControlConfig() {
 }
 
 function generateSampleClip(outPath) {
-  const ffmpeg = process.env.MOTION_PREVIS_FFMPEG || 'ffmpeg';
+  const preparedWindowsFfmpeg = path.join(root, 'runtime', 'media', 'win32-x64', 'ffmpeg.exe');
+  const ffmpeg = process.env.MOTION_PREVIS_FFMPEG ||
+    (process.platform === 'win32' && fs.existsSync(preparedWindowsFfmpeg) ? preparedWindowsFfmpeg : 'ffmpeg');
   return new Promise((resolve, reject) => {
     const child = spawn(
       ffmpeg,

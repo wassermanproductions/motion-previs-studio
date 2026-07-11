@@ -25,7 +25,9 @@ function countEnding(entries, ending) {
 
 function verifyResources(resources) {
   const archive = path.join(resources, 'app.asar');
-  const entries = asar.listPackage(archive);
+  const entries = asar.listPackage(archive).map((entry) =>
+    `/${entry.replace(/^[\\/]+/, '').replaceAll('\\', '/')}`
+  );
   const forbidden = [
     '/node_modules/react/',
     '/node_modules/react-dom/',
