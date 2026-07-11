@@ -113,7 +113,9 @@ if ($env:MOTION_PREVIS_EXPECTED_APP_ID) {
 $Installer = Get-ChildItem $Release -Filter '*.exe' | Where-Object FullName -NotLike "$Unpacked*" | Select-Object -First 1
 Assert-True ($null -ne $Installer) 'NSIS installer is missing.'
 $InstallDir = Join-Path $SpecialRoot 'Custom Install Directory'
-$install = Start-Process -FilePath $Installer.FullName -ArgumentList "/S /D=`"$InstallDir`"" -PassThru -Wait
+# NSIS requires /D= to be the final argument and explicitly forbids quoting it,
+# even when the destination contains spaces. It consumes the rest of the line.
+$install = Start-Process -FilePath $Installer.FullName -ArgumentList "/S /D=$InstallDir" -PassThru -Wait
 Assert-True ($install.ExitCode -eq 0) 'Silent per-user NSIS install failed.'
 $InstalledExe = Get-ChildItem $InstallDir -Recurse -Filter '*.exe' | Where-Object Name -NotMatch 'uninstall' | Select-Object -First 1
 Assert-True ($null -ne $InstalledExe) 'Installed application executable is missing.'

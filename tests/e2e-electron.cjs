@@ -7,6 +7,11 @@ const { spawn } = require('node:child_process');
 const { _electron } = require('playwright');
 const configPaths = require('../electron/config.cjs');
 
+function canonicalPathForComparison(value) {
+  const canonical = fs.realpathSync.native ? fs.realpathSync.native(value) : fs.realpathSync(value);
+  return process.platform === 'win32' ? canonical.toLowerCase() : canonical;
+}
+
 const root = path.resolve(__dirname, '..');
 const outputDir = path.join(root, 'output', 'playwright');
 const e2eRoot = process.env.MPS_E2E_ROOT || path.join(os.tmpdir(), 'OneDrive - Studio', "Director's Cut", 'José');
@@ -523,7 +528,10 @@ async function runRelinkCheck(electronApp, handoffVideoPath, blockoutMock) {
   );
   await waitForRendererText(electronApp, path.basename(samplePath));
   const session = await executeInRenderer(electronApp, 'window.motionPrevis.loadSession()');
-  if (session.sourcePath !== fs.realpathSync(samplePath) || session.sourceExists !== true) {
+  if (
+    canonicalPathForComparison(session.sourcePath) !== canonicalPathForComparison(samplePath)
+    || session.sourceExists !== true
+  ) {
     throw new Error('Relink did not update the machine-local session source path.');
   }
   if (session.range?.start !== 0.25 || session.range?.end !== 1.75) {
