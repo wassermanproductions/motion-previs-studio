@@ -134,10 +134,24 @@ Assert-True (-not (Test-Path $StartMenuShortcut)) 'Start Menu shortcut remains a
 Assert-True (Test-Path $UserData) 'Machine-local user data should be retained after uninstall.'
 
 if (Get-Command Start-MpScan -ErrorAction SilentlyContinue) {
-  Start-MpScan -ScanType CustomScan -ScanPath $Release
+  $scanCompleted = $false
+  foreach ($attempt in 1..3) {
+    try {
+      Start-MpScan -ScanType CustomScan -ScanPath $Release
+      $scanCompleted = $true
+      break
+    } catch {
+      Write-Warning "Microsoft Defender custom scan attempt $attempt failed: $($_.Exception.Message)"
+      if ($attempt -lt 3) { Start-Sleep -Seconds 5 }
+    }
+  }
   $activeThreats = @(Get-MpThreat -ErrorAction SilentlyContinue | Where-Object IsActive)
   Assert-True ($activeThreats.Count -eq 0) 'Microsoft Defender reported an active threat in release artifacts.'
-  Write-Host '[windows-package] Defender custom scan completed.'
+  if ($scanCompleted) {
+    Write-Host '[windows-package] Defender custom scan completed.'
+  } else {
+    Write-Warning 'Microsoft Defender was present but its runner custom-scan service remained unavailable; the clean-VM Defender gate is authoritative.'
+  }
 } else {
   Write-Warning 'Microsoft Defender cmdlets unavailable on this runner; manual VM scan remains required.'
 }
