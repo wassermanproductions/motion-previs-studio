@@ -27,7 +27,7 @@ try {
   assert.equal(security.canonicalAllowedDirectory(allowed), canonicalPath(allowed));
   assert.equal(security.canonicalAllowedDirectory(outside), null);
   const mediaUrl = security.toAppUrl(clip);
-  assert.equal(security.urlToPath(mediaUrl), fs.realpathSync(clip));
+  assert.equal(security.urlToPath(mediaUrl), canonicalPath(clip));
   assert.match(mediaUrl, /^mps:\/\/media\/file\?path=/);
 
   if (process.platform !== 'win32') {

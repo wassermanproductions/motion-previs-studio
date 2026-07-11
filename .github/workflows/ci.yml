@@ -59,6 +59,9 @@ jobs:
             runtime/bin
           key: mps-assets-${{ runner.os }}-${{ hashFiles('ASSET_MANIFEST.json', 'package-lock.json') }}
       - run: npm ci
+      - name: Install smoke-test FFmpeg (macOS only; never packaged)
+        if: runner.os == 'macOS'
+        run: brew list ffmpeg >/dev/null 2>&1 || brew install ffmpeg
       - run: npm run verify:platform
       - run: npm run verify:encoder
       - run: npm run verify:shutdown
