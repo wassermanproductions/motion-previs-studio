@@ -73,7 +73,8 @@ async function main() {
 
   const port = await findOpenPort(Number(process.env.MPS_E2E_PORT || 5173));
   const rendererUrl = `http://127.0.0.1:${port}`;
-  const vite = spawn(process.platform === 'win32' ? 'npx.cmd' : 'npx', ['vite', '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
+  const viteCli = path.join(path.dirname(require.resolve('vite/package.json')), 'bin', 'vite.js');
+  const vite = spawn(process.execPath, [viteCli, '--host', '127.0.0.1', '--port', String(port), '--strictPort'], {
     cwd: root,
     env: process.env,
     stdio: ['ignore', 'pipe', 'pipe']
