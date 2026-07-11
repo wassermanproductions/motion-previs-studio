@@ -67,7 +67,6 @@ jobs:
             "$hash *$relative"
           } | Set-Content -Encoding ascii release/SHA256SUMS
       - name: Attest release provenance
-        if: startsWith(github.ref, 'refs/tags/')
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: release/*.exe
