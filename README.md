@@ -233,3 +233,12 @@ Motion Previs Studio v4 was developed and created by **Sam Wasserman** for **Was
 - [Wasserman.ai](https://wasserman.ai)
 
 Windows support contributed and maintained by **Gumbii Digital** ([github.com/GumbiiDigital](https://github.com/GumbiiDigital)) — see [MODIFICATIONS.md](MODIFICATIONS.md).
+
+## Support
+
+A few people asked if they could send tips to support my work developing open source tools. So I set up an optional way in case anyone wants to.
+
+No pressure at all. Using the apps, sharing them, starring the repositories, and contributing code all help too. Thank you.
+
+- [GitHub Sponsors](https://github.com/sponsors/wassermanproductions)
+- [Ko-fi](https://ko-fi.com/samwasserman)
