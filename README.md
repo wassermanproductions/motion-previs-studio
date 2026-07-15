@@ -72,6 +72,13 @@ This repository contains the v4 source code. Local signed app bundles and genera
 6. Review pose, depth, camera, diagnostics, and quality metrics.
 7. Export the Production Pack, then optionally Send to Blockout as a ghost reference.
 
+## Works with
+
+Motion Previs Studio is one of three standalone filmmaking apps that fit together. Each works on its own, and they chain: measure a reference here, block and export the shot in Blockout, then split the finished mix in Stem Studio once the edit is done.
+
+- **[Blockout](https://github.com/wassermanproductions/blockout)** — grey-box previs. Stage the scene, block the action, and export video, depth, stills, and a prompt. Send a reference straight from here into a Blockout shot.
+- **[Stem Studio](https://github.com/wassermanproductions/stem-studio)** — splits a finished mix back into dialogue, music, and SFX stems.
+
 ## Exported Production Pack
 
 Each export can include:
