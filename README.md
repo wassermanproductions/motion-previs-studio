@@ -201,6 +201,19 @@ npm run screenshots
 
 The screenshot command writes GitHub-ready images to `docs/screenshots/`.
 
+## Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| The wrong source is restored | Stop the analysis, import the intended source again, and confirm the first, middle, and final frames before rerunning. |
+| Pose landmarks swap between people or collapse | Shorten the selected range, use a source where the subject is more visible, or disable the affected pose layer. |
+| The camera path follows the subject | Confirm the reference mode and subject masking, then compare `Camera only` with `Full scene`. Use `Camera only` when you want background-derived camera movement without subject motion. |
+| Depth is unavailable or unstable | Retry the depth pass so the supported CPU/WASM fallback can run. If it still fails, export without that layer. |
+| The Production Pack is incomplete | Keep the failed export for comparison, export again, and check `bundle_manifest.json` against the expected file list above. |
+| A restored session reports that its source media is missing | Select **Relink Media**, locate the moved file, and rerun analysis. Portable bundle manifests should contain relative filenames, not the machine-local source path. |
+| Send to Blockout reports that Blockout is unavailable | Launch Blockout, open the destination project, wait for it to finish starting, and retry the handoff. |
+| Cancellation remains in progress | Wait for analysis and encoding to close before deleting temporary files or starting another job. |
+
 ## Sharing Notes
 
 The current local macOS build can run on this machine and can be shared with trusted testers, but it is not yet Apple Developer ID signed or notarized. For broad public sharing, the next packaging step is to add a real Apple Developer certificate, sign the app, notarize it with Apple, and then build the distributable DMG/ZIP.
