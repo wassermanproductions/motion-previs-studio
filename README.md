@@ -72,6 +72,11 @@ This repository contains the v4 source code. Local signed app bundles and genera
 6. Review pose, depth, camera, diagnostics, and quality metrics.
 7. Export the Production Pack, then optionally Send to Blockout as a ghost reference.
 
+## Operator handbook
+
+- [Motion Previs Studio Operator Handbook](docs/handbooks/motion-previs-studio-sop-handbook.md) ([PDF](docs/handbooks/motion-previs-studio-sop-handbook.pdf))
+- [Three-App Windows Workflow Handbook](https://github.com/wassermanproductions/blockout/blob/main/docs/handbooks/three-app-workflow-handbook.md)
+
 ## Exported Production Pack
 
 Each export can include:
