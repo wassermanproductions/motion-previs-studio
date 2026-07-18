@@ -17,6 +17,22 @@ Motion Previs Studio v4 is a cross-platform desktop app for turning source video
 
 This repository contains the v4 source code. Local signed app bundles and generated build artifacts are intentionally not committed.
 
+## Download
+
+**macOS (Apple Silicon) — paste one line into Terminal** (⌘-Space, type "Terminal") and it downloads the latest build, installs it to Applications, and opens it — no security warnings:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/wassermanproductions/motion-previs-studio/main/install.sh | bash
+```
+
+**Windows 11** — download the `win-x64.exe` installer from [GitHub Releases](https://github.com/wassermanproductions/motion-previs-studio/releases). If SmartScreen appears, click **More info → Run anyway**.
+
+If you download the macOS `.dmg` in a browser instead of using the installer above, macOS will falsely claim the app "is damaged" — unsigned browser downloads are quarantined. Drag the app to Applications, then run this once in Terminal and it opens normally from then on:
+
+```bash
+xattr -cr "/Applications/Motion Previs Studio v4.app"
+```
+
 ## New in v4
 
 - **OpenPose / BODY_25 export.** Every bundle now ships a deterministic `openpose_pose.mp4` skeleton video plus per-frame `openpose_keypoints.json` in the standard OpenPose BODY_25 layout (75 numbers per person), for AI-video pipelines and ControlNet graphs that expect OpenPose input.
